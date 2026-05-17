@@ -1,6 +1,6 @@
 ---
 - name: Check Disk Space and Alert via Discord
-  hosts: linux_vms
+  hosts: docker_vms
   become: true
   tasks:
 
