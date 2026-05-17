@@ -1,13 +1,45 @@
-- hosts: "{{ hosts }}"
-
+---
+- name: Remove Unused Docker Images
+  hosts: linux_vms
+  become: true
   tasks:
 
-    - name: Prune non-dangling, and dangling images
+    - name: Get list of dangling images before cleanup
+      command: docker images -f dangling=true -q
+      register: dangling_before
+      changed_when: false
+
+    - name: Get list of unused images before cleanup
+      shell: docker images --format '{{ '{{' }}.Repository{{ '}}' }}:{{ '{{' }}.Tag{{ '}}' }} {{ '{{' }}.Size{{ '}}' }}' | head -20
+      register: images_before
+      changed_when: false
+
+    - name: Display current images
+      debug:
+        msg: "{{ inventory_hostname }} has {{ dangling_before.stdout_lines | length }} dangling images"
+
+    - name: Remove all unused Docker images
       community.docker.docker_prune:
-        containers: false
         images: true
         images_filters:
           dangling: false
-        networks: false
-        volumes: false
-        builder_cache: false
+      register: prune_result
+
+    - name: Display cleanup results
+      debug:
+        msg: "{{ inventory_hostname }} - Reclaimed {{ prune_result.images_space_reclaimed | default(0) | human_readable }}"
+      when: prune_result is defined
+
+    - name: Send Discord notification
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "🧹 Docker cleanup on {{ inventory_hostname }}: Removed {{ prune_result.images | default([]) | length }} images, reclaimed {{ prune_result.images_space_reclaimed | default(0) | human_readable }}"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      when:
+        - discord_webhook_url is defined
+        - prune_result.images | default([]) | length > 0
