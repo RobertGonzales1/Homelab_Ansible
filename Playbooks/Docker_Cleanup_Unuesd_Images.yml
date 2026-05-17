@@ -1,6 +1,6 @@
 ---
 - name: Remove Unused Docker Images
-  hosts: linux_vms
+  hosts: docker_vms
   become: true
   tasks:
 
