@@ -1,0 +1,22 @@
+[docker_vms]
+10.30.1.10    # Authentik
+10.30.1.12    # Notifiarr
+10.30.1.103   # JellySeerr
+10.30.1.105   # Huntarr
+10.30.1.106   # BentoPDF
+10.30.1.107   # Metube
+10.30.1.108   # Autobrr
+10.30.1.114   # Profilarr
+10.30.1.115   # UptimeKuma
+10.30.1.116   # Nginx
+10.30.1.117   # Flaresolver
+10.30.1.118   # ConvertX
+10.30.1.119   # Jackett
+10.30.1.120   # Speedtest
+10.30.1.129   # Cleanuparr
+10.30.1.131   # Immich
+10.30.1.17    # Semaphore
+
+[all:vars]
+ansible_port=2222
+ansible_python_interpreter=/usr/bin/python3.12
