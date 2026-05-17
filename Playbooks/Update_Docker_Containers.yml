@@ -1,0 +1,67 @@
+---
+- name: Update Docker Containers
+  hosts: docker_vms
+  become: true
+  serial: 5
+  tasks:
+
+    - name: Get list of running containers
+      command: docker ps --format '{{ '{{' }}.Names{{ '}}' }}'
+      register: running_containers
+      changed_when: false
+
+    - name: Display running containers
+      debug:
+        msg: "{{ inventory_hostname }} - {{ running_containers.stdout_lines | length }} running containers"
+
+    - name: Pull latest images for all running containers
+      shell: docker ps --format '{{ '{{' }}.Image{{ '}}' }}' | sort -u | xargs -I {} docker pull {}
+      register: pull_result
+      changed_when: "'Downloaded newer image' in pull_result.stdout"
+
+    - name: Check for containers using outdated images
+      shell: |
+        for container in $(docker ps --format '{{ '{{' }}.Names{{ '}}' }}'); do
+          image=$(docker inspect --format '{{ '{{' }}.Config.Image{{ '}}' }}' "$container")
+          running_id=$(docker inspect --format '{{ '{{' }}.Image{{ '}}' }}' "$container")
+          latest_id=$(docker inspect --format '{{ '{{' }}.Id{{ '}}' }}' "$image" 2>/dev/null)
+          if [ "$running_id" != "$latest_id" ] && [ -n "$latest_id" ]; then
+            echo "$container"
+          fi
+        done
+      register: outdated_containers
+      changed_when: false
+
+    - name: Display containers needing recreation
+      debug:
+        msg: "{{ inventory_hostname }} - Containers with updates available: {{ outdated_containers.stdout_lines | default([]) | join(', ') | default('none', true) }}"
+
+    - name: Restart docker-compose stacks with updated images
+      shell: |
+        cd /opt/docker 2>/dev/null || cd /home/*/docker 2>/dev/null || exit 0
+        if [ -f docker-compose.yml ] || [ -f docker-compose.yaml ] || [ -f compose.yml ] || [ -f compose.yaml ]; then
+          docker compose up -d --remove-orphans
+        fi
+      register: compose_result
+      when: outdated_containers.stdout_lines | default([]) | length > 0
+
+    - name: Remove unused images after update
+      community.docker.docker_prune:
+        images: true
+        images_filters:
+          dangling: false
+      register: prune_result
+
+    - name: Send Discord notification for Docker updates
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "🐳 {{ inventory_hostname }}: Pulled latest images for {{ running_containers.stdout_lines | length }} containers. {{ outdated_containers.stdout_lines | default([]) | length }} updated. Reclaimed {{ prune_result.images_space_reclaimed | default(0) | human_readable }}"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      when:
+        - discord_webhook_url is defined
+        - pull_result.changed or (outdated_containers.stdout_lines | default([]) | length > 0)
