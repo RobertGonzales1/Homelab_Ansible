@@ -1,0 +1,82 @@
+---
+- name: Container Health Check
+  hosts: docker_vms
+  become: true
+  tasks:
+
+    - name: Get unhealthy containers
+      shell: docker ps --filter health=unhealthy --format '{{ '{{' }}.Names{{ '}}' }} ({{ '{{' }}.Status{{ '}}' }})'
+      register: unhealthy
+      changed_when: false
+
+    - name: Get restarting containers
+      shell: docker ps --filter status=restarting --format '{{ '{{' }}.Names{{ '}}' }} ({{ '{{' }}.Status{{ '}}' }})'
+      register: restarting
+      changed_when: false
+
+    - name: Get exited containers (last 24h)
+      shell: |
+        docker ps -a --filter status=exited --format '{{ '{{' }}.Names{{ '}}' }} exited {{ '{{' }}.Status{{ '}}' }}' | while read line; do
+          name=$(echo "$line" | awk '{print $1}')
+          exited_at=$(docker inspect --format '{{ '{{' }}.State.FinishedAt{{ '}}' }}' "$name" 2>/dev/null)
+          if [ -n "$exited_at" ]; then
+            exited_epoch=$(date -d "$exited_at" +%s 2>/dev/null || echo 0)
+            now_epoch=$(date +%s)
+            age=$(( (now_epoch - exited_epoch) / 3600 ))
+            if [ "$age" -lt 24 ]; then
+              echo "$line"
+            fi
+          fi
+        done
+      register: recently_exited
+      changed_when: false
+
+    - name: Get container resource usage
+      shell: docker stats --no-stream --format '{{ '{{' }}.Name{{ '}}' }}: CPU {{ '{{' }}.CPUPerc{{ '}}' }} | MEM {{ '{{' }}.MemUsage{{ '}}' }}'
+      register: container_stats
+      changed_when: false
+
+    - name: Display health status
+      debug:
+        msg:
+          - "{{ inventory_hostname }} Health Report:"
+          - "Unhealthy: {{ unhealthy.stdout_lines | default([]) | length }}"
+          - "Restarting: {{ restarting.stdout_lines | default([]) | length }}"
+          - "Recently exited: {{ recently_exited.stdout_lines | default([]) | length }}"
+
+    - name: Build problem report
+      set_fact:
+        has_problems: "{{ (unhealthy.stdout_lines | default([]) | length > 0) or (restarting.stdout_lines | default([]) | length > 0) or (recently_exited.stdout_lines | default([]) | length > 0) }}"
+        problem_report: |
+          {% if unhealthy.stdout_lines | default([]) | length > 0 %}
+          ⛔ Unhealthy:
+          {% for c in unhealthy.stdout_lines %}
+          - {{ c }}
+          {% endfor %}
+          {% endif %}
+          {% if restarting.stdout_lines | default([]) | length > 0 %}
+          🔄 Restarting:
+          {% for c in restarting.stdout_lines %}
+          - {{ c }}
+          {% endfor %}
+          {% endif %}
+          {% if recently_exited.stdout_lines | default([]) | length > 0 %}
+          💀 Exited (last 24h):
+          {% for c in recently_exited.stdout_lines %}
+          - {{ c }}
+          {% endfor %}
+          {% endif %}
+
+    - name: Send Discord alert for problems
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "🏥 {{ inventory_hostname }}:\n```\n{{ problem_report }}\n```"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      when:
+        - discord_webhook_url is defined
+        - has_problems | bool

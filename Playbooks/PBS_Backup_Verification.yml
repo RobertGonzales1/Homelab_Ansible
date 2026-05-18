@@ -1,0 +1,82 @@
+---
+- name: PBS Backup Verification
+  hosts: docker_vms:linux_vms
+  become: true
+  vars:
+    pbs_host: "10.30.1.5"
+    backup_max_age_hours: 26
+  tasks:
+
+    - name: Check last backup timestamp via vzdump logs
+      shell: |
+        if [ -d /var/log/vzdump ]; then
+          latest=$(ls -t /var/log/vzdump/*.log 2>/dev/null | head -1)
+          if [ -n "$latest" ]; then
+            stat -c %Y "$latest"
+          else
+            echo "0"
+          fi
+        else
+          echo "0"
+        fi
+      register: last_backup_ts
+      changed_when: false
+      delegate_to: "{{ pbs_host }}"
+
+    - name: Calculate backup age
+      set_fact:
+        backup_age_hours: "{{ ((ansible_date_time.epoch | int) - (last_backup_ts.stdout | int)) / 3600 }}"
+      when: last_backup_ts.stdout | int > 0
+
+    - name: Check backup status via pvesh on Proxmox host
+      shell: pvesh get /nodes/localhost/tasks --typefilter vzdump --limit 5 --output-format json 2>/dev/null || echo "[]"
+      register: backup_tasks
+      changed_when: false
+      delegate_to: "{{ pbs_host }}"
+      failed_when: false
+
+    - name: Display backup status
+      debug:
+        msg: >-
+          {{ inventory_hostname }} -
+          Last backup: {{ backup_age_hours | default('unknown') }} hours ago
+          {{ '⚠️ STALE' if (backup_age_hours | default(999) | float) > (backup_max_age_hours | float) else '✅ OK' }}
+
+    - name: Send Discord alert for stale backups
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "🚨 {{ inventory_hostname }}: Last backup is {{ backup_age_hours | default('unknown') }} hours old (threshold: {{ backup_max_age_hours }}h)"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      when:
+        - discord_webhook_url is defined
+        - (backup_age_hours | default(999) | float) > (backup_max_age_hours | float)
+
+- name: PBS Storage Health Check
+  hosts: localhost
+  connection: local
+  vars:
+    pbs_host: "10.30.1.5"
+  tasks:
+
+    - name: Check PBS datastore usage
+      shell: ssh {{ pbs_host }} "proxmox-backup-client status --output-format json 2>/dev/null || echo '{}'"
+      register: pbs_storage
+      changed_when: false
+      failed_when: false
+
+    - name: Send Discord PBS summary
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "💾 PBS Storage Check:\n```\n{{ pbs_storage.stdout }}\n```"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      when: discord_webhook_url is defined

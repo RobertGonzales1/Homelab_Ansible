@@ -1,0 +1,65 @@
+---
+- name: Journal Cleanup
+  hosts: all
+  become: true
+  vars:
+    journal_max_age: 7d
+  tasks:
+
+    - name: Get current journal disk usage
+      command: journalctl --disk-usage
+      register: journal_before
+      changed_when: false
+
+    - name: Display current usage
+      debug:
+        msg: "{{ inventory_hostname }} - {{ journal_before.stdout }}"
+
+    - name: Vacuum journals older than retention period
+      command: journalctl --vacuum-time={{ journal_max_age }}
+      register: vacuum_result
+      changed_when: "'Freed' in vacuum_result.stdout"
+
+    - name: Get journal usage after cleanup
+      command: journalctl --disk-usage
+      register: journal_after
+      changed_when: false
+
+    - name: Configure persistent journal size limit
+      copy:
+        dest: /etc/systemd/journald.conf.d/size-limit.conf
+        content: |
+          [Journal]
+          SystemMaxUse=200M
+          SystemKeepFree=500M
+          MaxRetentionSec=7day
+        owner: root
+        group: root
+        mode: "0644"
+      register: journald_config
+
+    - name: Create journald config directory
+      file:
+        path: /etc/systemd/journald.conf.d
+        state: directory
+        mode: "0755"
+
+    - name: Restart journald to apply config
+      systemd:
+        name: systemd-journald
+        state: restarted
+      when: journald_config.changed
+
+    - name: Send Discord notification
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "🗑️ {{ inventory_hostname }}: Journal cleanup - Before: {{ journal_before.stdout }} | After: {{ journal_after.stdout }}{{ ' | journald size limit configured' if journald_config.changed else '' }}"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      when:
+        - discord_webhook_url is defined
+        - vacuum_result.changed or journald_config.changed

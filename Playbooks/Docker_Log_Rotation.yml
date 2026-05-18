@@ -1,0 +1,69 @@
+---
+- name: Docker Log Rotation
+  hosts: docker_vms
+  become: true
+  vars:
+    max_log_size_mb: 100
+  tasks:
+
+    - name: Find oversized container logs
+      shell: |
+        find /var/lib/docker/containers/ -name "*-json.log" -size +{{ max_log_size_mb }}M -exec ls -lh {} \; 2>/dev/null | awk '{print $5, $NF}'
+      register: large_logs
+      changed_when: false
+
+    - name: Get total docker log size
+      shell: du -sh /var/lib/docker/containers/*/  2>/dev/null | sort -rh | head -10
+      register: log_sizes
+      changed_when: false
+
+    - name: Display large logs
+      debug:
+        msg: "{{ inventory_hostname }} - {{ large_logs.stdout_lines | length }} logs over {{ max_log_size_mb }}MB"
+
+    - name: Truncate oversized container logs
+      shell: |
+        truncated=0
+        for log in $(find /var/lib/docker/containers/ -name "*-json.log" -size +{{ max_log_size_mb }}M 2>/dev/null); do
+          truncate -s 0 "$log"
+          truncated=$((truncated + 1))
+        done
+        echo "$truncated"
+      register: truncated
+      changed_when: truncated.stdout | int > 0
+
+    - name: Configure Docker daemon log rotation
+      copy:
+        dest: /etc/docker/daemon.json
+        content: |
+          {
+            "log-driver": "json-file",
+            "log-opts": {
+              "max-size": "50m",
+              "max-file": "3"
+            }
+          }
+        owner: root
+        group: root
+        mode: "0644"
+      register: daemon_config
+
+    - name: Restart Docker to apply daemon config
+      systemd:
+        name: docker
+        state: restarted
+      when: daemon_config.changed
+
+    - name: Send Discord notification
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "📜 {{ inventory_hostname }}: Truncated {{ truncated.stdout }} oversized logs.{{ ' Docker daemon log rotation configured (50MB max, 3 files).' if daemon_config.changed else '' }}"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      when:
+        - discord_webhook_url is defined
+        - (truncated.stdout | int > 0) or daemon_config.changed
