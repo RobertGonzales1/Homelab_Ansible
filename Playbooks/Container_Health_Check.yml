@@ -32,7 +32,7 @@
       changed_when: false
 
     - name: Get container resource usage
-      shell: docker stats --no-stream --format '{{ '{{' }}.Name{{ '}}' }}: CPU {{ '{{' }}.CPUPerc{{ '}}' }} | MEM {{ '{{' }}.MemUsage{{ '}}' }}'
+      shell: "docker stats --no-stream --format '{{ '{{' }}.Name{{ '}}' }}: CPU {{ '{{' }}.CPUPerc{{ '}}' }} | MEM {{ '{{' }}.MemUsage{{ '}}' }}'"
       register: container_stats
       changed_when: false
 
