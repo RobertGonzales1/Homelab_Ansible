@@ -1,6 +1,6 @@
 ---
 - name: Update Linux Packages
-  hosts: all
+  hosts: docker_vms:linux_vms
   become: true
   serial: 5
   tasks:
