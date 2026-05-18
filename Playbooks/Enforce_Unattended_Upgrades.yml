@@ -1,6 +1,6 @@
 ---
 - name: Enforce Unattended Upgrades
-  hosts: all
+  hosts: docker_vms:linux_vms
   become: true
   tasks:
 
