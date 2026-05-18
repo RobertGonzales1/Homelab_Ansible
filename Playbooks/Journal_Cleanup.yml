@@ -25,6 +25,12 @@
       register: journal_after
       changed_when: false
 
+    - name: Create journald config directory
+      file:
+        path: /etc/systemd/journald.conf.d
+        state: directory
+        mode: "0755"
+
     - name: Configure persistent journal size limit
       copy:
         dest: /etc/systemd/journald.conf.d/size-limit.conf
@@ -37,12 +43,6 @@
         group: root
         mode: "0644"
       register: journald_config
-
-    - name: Create journald config directory
-      file:
-        path: /etc/systemd/journald.conf.d
-        state: directory
-        mode: "0755"
 
     - name: Restart journald to apply config
       systemd:
