@@ -36,7 +36,7 @@
 10.30.1.14    # PVELINS02N01
 
 [pbs]
-10.30.1.5 ansible_port=22 ansible_user=root
+10.30.1.5 ansible_port=22 ansible_user=root ansible_python_interpreter=/usr/bin/python3
 
 [proxmox:vars]
 ansible_user=root
