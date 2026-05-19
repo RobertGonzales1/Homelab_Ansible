@@ -1,0 +1,61 @@
+---
+- name: Reboot Age Report
+  hosts: docker_vms:linux_vms
+  become: true
+  serial: 5
+  vars:
+    max_uptime_days: 90
+  tasks:
+
+    - name: Get uptime in seconds
+      shell: cat /proc/uptime | awk '{print int($1)}'
+      register: uptime_seconds
+      changed_when: false
+
+    - name: Calculate uptime in days
+      set_fact:
+        uptime_days: "{{ (uptime_seconds.stdout | int / 86400) | round(1) }}"
+
+    - name: Get human readable uptime
+      command: uptime -p
+      register: uptime_pretty
+      changed_when: false
+
+    - name: Get current kernel version
+      command: uname -r
+      register: current_kernel
+      changed_when: false
+
+    - name: Check if newer kernel is installed but not booted
+      shell: |
+        installed=$(dpkg -l 'linux-image-*' 2>/dev/null | grep "^ii" | awk '{print $2}' | grep -v "generic$" | sort -V | tail -1 | sed 's/linux-image-//')
+        running=$(uname -r)
+        if [ "$installed" != "$running" ] && [ -n "$installed" ]; then
+          echo "STALE|running:${running}|installed:${installed}"
+        else
+          echo "CURRENT|${running}"
+        fi
+      register: kernel_status
+      changed_when: false
+
+    - name: Display uptime report
+      debug:
+        msg: "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] - {{ uptime_pretty.stdout }} | Kernel: {{ current_kernel.stdout }} | {{ 'NEEDS REBOOT' if uptime_days | float > max_uptime_days | float else 'OK' }}"
+
+    - name: Send Discord alert for stale VMs
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "🔄 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: {{ uptime_pretty.stdout }} ({{ uptime_days }} days)\nKernel: {{ current_kernel.stdout }}{{ ' ⚠️ Newer kernel available: ' + kernel_status.stdout.split('|')[2] | replace('installed:', '') if 'STALE' in kernel_status.stdout else '' }}"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
+      when:
+        - discord_webhook_url is defined
+        - (uptime_days | float > max_uptime_days | float) or ('STALE' in kernel_status.stdout)
