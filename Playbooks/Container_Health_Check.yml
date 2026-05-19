@@ -39,7 +39,7 @@
     - name: Display health status
       debug:
         msg:
-          - "{{ inventory_hostname }} Health Report:"
+          - "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] Health Report:"
           - "Unhealthy: {{ unhealthy.stdout_lines | default([]) | length }}"
           - "Restarting: {{ restarting.stdout_lines | default([]) | length }}"
           - "Recently exited: {{ recently_exited.stdout_lines | default([]) | length }}"
@@ -73,7 +73,7 @@
         method: POST
         body_format: json
         body:
-          content: "🏥 {{ inventory_hostname }}:\n```\n{{ problem_report }}\n```"
+          content: "🏥 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]:\n```\n{{ problem_report }}\n```"
         headers:
           Content-Type: application/json
         status_code: 204

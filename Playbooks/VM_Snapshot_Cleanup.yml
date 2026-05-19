@@ -36,7 +36,7 @@
 
     - name: Display snapshot report
       debug:
-        msg: "{{ inventory_hostname }} - Found {{ all_snapshots.stdout_lines | default([]) | length }} total snapshots"
+        msg: "{{ inventory_hostname }} ({{ ansible_host }}) - Found {{ all_snapshots.stdout_lines | default([]) | length }} total snapshots"
 
     - name: Remove snapshots older than threshold
       shell: |
@@ -74,7 +74,7 @@
         method: POST
         body_format: json
         body:
-          content: "🧹 {{ inventory_hostname }}: Snapshot cleanup - Removed {{ removed_snapshots.stdout | default('0') }} VM snapshots older than {{ snapshot_max_age_days }} days. {{ ct_snapshots.stdout_lines | default([]) | length }} LXC snapshots found."
+          content: "🧹 {{ inventory_hostname }} ({{ ansible_host }}): Snapshot cleanup - Removed {{ removed_snapshots.stdout | default('0') }} VM snapshots older than {{ snapshot_max_age_days }} days. {{ ct_snapshots.stdout_lines | default([]) | length }} LXC snapshots found."
         headers:
           Content-Type: application/json
         status_code: 204

@@ -19,7 +19,7 @@
 
     - name: Display large logs
       debug:
-        msg: "{{ inventory_hostname }} - {{ large_logs.stdout_lines | length }} logs over {{ max_log_size_mb }}MB"
+        msg: "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] - {{ large_logs.stdout_lines | length }} logs over {{ max_log_size_mb }}MB"
 
     - name: Truncate oversized container logs
       shell: |
@@ -60,7 +60,7 @@
         method: POST
         body_format: json
         body:
-          content: "📜 {{ inventory_hostname }}: Truncated {{ truncated.stdout }} oversized logs.{{ ' Docker daemon log rotation configured (50MB max, 3 files).' if daemon_config.changed else '' }}"
+          content: "📜 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: Truncated {{ truncated.stdout }} oversized logs.{{ ' Docker daemon log rotation configured (50MB max, 3 files).' if daemon_config.changed else '' }}"
         headers:
           Content-Type: application/json
         status_code: 204

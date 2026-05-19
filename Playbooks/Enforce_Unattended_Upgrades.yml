@@ -58,7 +58,7 @@
 
     - name: Display verification
       debug:
-        msg: "{{ inventory_hostname }} - Unattended upgrades: {{ 'ENABLED' if '1' in verify_result.stdout else 'DISABLED' }}"
+        msg: "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] - Unattended upgrades: {{ 'ENABLED' if '1' in verify_result.stdout else 'DISABLED' }}"
 
     - name: Send Discord notification
       uri:
@@ -66,7 +66,7 @@
         method: POST
         body_format: json
         body:
-          content: "🔧 {{ inventory_hostname }}: Unattended-upgrades {{ 'configured successfully' if config_changed.changed else 'already configured' }}"
+          content: "🔧 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: Unattended-upgrades {{ 'configured successfully' if config_changed.changed else 'already configured' }}"
         headers:
           Content-Type: application/json
         status_code: 204

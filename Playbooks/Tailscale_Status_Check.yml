@@ -26,7 +26,7 @@
     - name: Display Tailscale status
       debug:
         msg: >-
-          {{ inventory_hostname }} ({{ ts_self_name | default('unknown') }}) -
+          {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] -
           {{ 'ONLINE' if (ts_self_online | default(false)) else 'OFFLINE' }} |
           IP: {{ ts_self_ip | default('unknown') }} |
           Peers: {{ ts_peer_count | default(0) }}
@@ -37,7 +37,7 @@
         method: POST
         body_format: json
         body:
-          content: "🚨 {{ inventory_hostname }}: Tailscale is {{ 'NOT RUNNING' if ts_status.rc != 0 else 'OFFLINE' }}!"
+          content: "🚨 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: Tailscale is {{ 'NOT RUNNING' if ts_status.rc != 0 else 'OFFLINE' }}!"
         headers:
           Content-Type: application/json
         status_code: 204
@@ -51,7 +51,7 @@
         method: POST
         body_format: json
         body:
-          content: "🌐 {{ inventory_hostname }} ({{ ts_self_name }}): Tailscale ✅ Online | IP: {{ ts_self_ip }} | {{ ts_peer_count }} peers connected"
+          content: "🌐 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: Tailscale ✅ Online | IP: {{ ts_self_ip }} | {{ ts_peer_count }} peers connected"
         headers:
           Content-Type: application/json
         status_code: 204
