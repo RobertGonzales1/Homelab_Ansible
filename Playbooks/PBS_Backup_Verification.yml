@@ -1,79 +1,101 @@
 ---
 - name: PBS Backup Verification
-  hosts: docker_vms:linux_vms
+  hosts: pbs
   become: true
   vars:
-    pbs_host: "pbs01"
     backup_max_age_hours: 26
   tasks:
 
-    - name: Check last backup timestamp via vzdump logs
+    - name: Get list of datastores
+      shell: proxmox-backup-manager datastore list --output-format json 2>/dev/null || echo "[]"
+      register: datastores
+      changed_when: false
+
+    - name: Get all backup snapshots from each datastore
       shell: |
-        if [ -d /var/log/vzdump ]; then
-          latest=$(ls -t /var/log/vzdump/*.log 2>/dev/null | head -1)
-          if [ -n "$latest" ]; then
-            stat -c %Y "$latest"
-          else
-            echo "0"
-          fi
-        else
-          echo "0"
-        fi
-      register: last_backup_ts
+        report=""
+        stale=""
+        now=$(date +%s)
+        threshold=$(( {{ backup_max_age_hours }} * 3600 ))
+
+        for ds in $(echo '{{ datastores.stdout }}' | python3 -c "import sys,json; [print(d['name']) for d in json.load(sys.stdin)]" 2>/dev/null); do
+          snapshots=$(proxmox-backup-client snapshots --repository "localhost:${ds}" --output-format json 2>/dev/null || echo "[]")
+
+          echo "$snapshots" | python3 -c "
+        import sys, json
+        from datetime import datetime
+
+        now = $now
+        threshold = $threshold
+        data = json.load(sys.stdin)
+
+        vms = {}
+        for snap in data:
+            bid = snap.get('backup-id', 'unknown')
+            btype = snap.get('backup-type', 'unknown')
+            btime = snap.get('backup-time', 0)
+            if bid not in vms or btime > vms[bid]['time']:
+                vms[bid] = {'time': btime, 'type': btype}
+
+        for vid, info in sorted(vms.items()):
+            age_h = round((now - info['time']) / 3600, 1)
+            status = 'STALE' if (now - info['time']) > threshold else 'OK'
+            print(f\"{vid}|{info['type']}|{age_h}|{status}|${ds}\")
+        " 2>/dev/null
+        done
+      register: backup_report
       changed_when: false
-      delegate_to: "{{ pbs_host }}"
 
-    - name: Calculate backup age
-      set_fact:
-        backup_age_hours: "{{ ((ansible_date_time.epoch | int) - (last_backup_ts.stdout | int)) / 3600 }}"
-      when: last_backup_ts.stdout | int > 0
-
-    - name: Check backup status via pvesh on Proxmox host
-      shell: pvesh get /nodes/localhost/tasks --typefilter vzdump --limit 5 --output-format json 2>/dev/null || echo "[]"
-      register: backup_tasks
-      changed_when: false
-      delegate_to: "{{ pbs_host }}"
-      failed_when: false
-
-    - name: Display backup status
+    - name: Display backup report
       debug:
-        msg: >-
-          {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] -
-          Last backup: {{ backup_age_hours | default('unknown') }} hours ago
-          {{ '⚠️ STALE' if (backup_age_hours | default(999) | float) > (backup_max_age_hours | float) else '✅ OK' }}
+        msg: "{{ item }}"
+      loop: "{{ backup_report.stdout_lines | default([]) }}"
 
-    - name: Send Discord alert for stale backups
+    - name: Build stale backup list
+      set_fact:
+        stale_backups: "{{ backup_report.stdout_lines | default([]) | select('search', '\\|STALE\\|') | list }}"
+        ok_backups: "{{ backup_report.stdout_lines | default([]) | select('search', '\\|OK\\|') | list }}"
+
+    - name: Build Discord summary
+      set_fact:
+        discord_summary: |
+          💾 **PBS Backup Report** ({{ inventory_hostname }} - {{ ansible_host }})
+
+          ✅ {{ ok_backups | length }} backups OK | ⚠️ {{ stale_backups | length }} stale (>{{ backup_max_age_hours }}h)
+          {% if stale_backups | length > 0 %}
+
+          Stale backups:
+          {% for entry in stale_backups %}
+          {% set parts = entry.split('|') %}
+          - {{ parts[0] }} ({{ parts[1] }}) - {{ parts[2] }}h old
+          {% endfor %}
+          {% endif %}
+
+    - name: Send Discord backup report
       uri:
         url: "{{ discord_webhook_url }}"
         method: POST
         body_format: json
         body:
-          content: "🚨 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: Last backup is {{ backup_age_hours | default('unknown') }} hours old (threshold: {{ backup_max_age_hours }}h)"
+          content: "{{ discord_summary }}"
         headers:
           Content-Type: application/json
         status_code: 204
-      when:
-        - discord_webhook_url is defined
-        - (backup_age_hours | default(999) | float) > (backup_max_age_hours | float)
-
-- name: PBS Storage Health Check
-  hosts: pbs
-  become: true
-  tasks:
+      when: discord_webhook_url is defined
 
     - name: Check PBS datastore usage
-      shell: proxmox-backup-client status --output-format json 2>/dev/null || echo '{}'
+      shell: |
+        df -h /mnt/datastore/* 2>/dev/null || df -h / 2>/dev/null
       register: pbs_storage
       changed_when: false
-      failed_when: false
 
-    - name: Send Discord PBS summary
+    - name: Send Discord storage summary
       uri:
         url: "{{ discord_webhook_url }}"
         method: POST
         body_format: json
         body:
-          content: "💾 {{ inventory_hostname }} ({{ ansible_host }}) Storage Check:\n```\n{{ pbs_storage.stdout }}\n```"
+          content: "📊 PBS Storage ({{ inventory_hostname }}):\n```\n{{ pbs_storage.stdout }}\n```"
         headers:
           Content-Type: application/json
         status_code: 204
