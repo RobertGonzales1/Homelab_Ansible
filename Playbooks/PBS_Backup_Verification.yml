@@ -6,70 +6,63 @@
     backup_max_age_hours: 26
   tasks:
 
-    - name: Get list of datastores
-      shell: proxmox-backup-manager datastore list --output-format json 2>/dev/null || echo "[]"
-      register: datastores
-      changed_when: false
-
-    - name: Get all backup snapshots from each datastore
+    - name: Get backup status from all datastores
       shell: |
-        report=""
-        stale=""
         now=$(date +%s)
         threshold=$(( {{ backup_max_age_hours }} * 3600 ))
 
-        for ds in $(echo '{{ datastores.stdout }}' | python3 -c "import sys,json; [print(d['name']) for d in json.load(sys.stdin)]" 2>/dev/null); do
-          snapshots=$(proxmox-backup-client snapshots --repository "localhost:${ds}" --output-format json 2>/dev/null || echo "[]")
+        for ds in /mnt/datastore/*/; do
+          ds_name=$(basename "$ds")
 
-          echo "$snapshots" | python3 -c "
-        import sys, json
-        from datetime import datetime
+          for type_dir in "$ds"vm/ "$ds"ct/; do
+            [ -d "$type_dir" ] || continue
+            backup_type=$(basename "$type_dir")
 
-        now = $now
-        threshold = $threshold
-        data = json.load(sys.stdin)
+            for id_dir in "$type_dir"*/; do
+              [ -d "$id_dir" ] || continue
+              backup_id=$(basename "$id_dir")
 
-        vms = {}
-        for snap in data:
-            bid = snap.get('backup-id', 'unknown')
-            btype = snap.get('backup-type', 'unknown')
-            btime = snap.get('backup-time', 0)
-            if bid not in vms or btime > vms[bid]['time']:
-                vms[bid] = {'time': btime, 'type': btype}
-
-        for vid, info in sorted(vms.items()):
-            age_h = round((now - info['time']) / 3600, 1)
-            status = 'STALE' if (now - info['time']) > threshold else 'OK'
-            print(f\"{vid}|{info['type']}|{age_h}|{status}|${ds}\")
-        " 2>/dev/null
+              latest=$(ls -1d "$id_dir"2* 2>/dev/null | sort | tail -1)
+              if [ -n "$latest" ]; then
+                snap_name=$(basename "$latest")
+                snap_ts=$(date -d "${snap_name}" +%s 2>/dev/null || echo 0)
+                if [ "$snap_ts" -gt 0 ]; then
+                  age_sec=$(( now - snap_ts ))
+                  age_h=$(( age_sec / 3600 ))
+                  if [ "$age_sec" -gt "$threshold" ]; then
+                    status="STALE"
+                  else
+                    status="OK"
+                  fi
+                  echo "${ds_name}|${backup_type}/${backup_id}|${snap_name}|${age_h}h|${status}"
+                fi
+              fi
+            done
+          done
         done
       register: backup_report
       changed_when: false
 
+    - name: Build summary
+      set_fact:
+        stale_backups: "{{ backup_report.stdout_lines | default([]) | select('search', '\\|STALE$') | list }}"
+        ok_backups: "{{ backup_report.stdout_lines | default([]) | select('search', '\\|OK$') | list }}"
+
     - name: Display backup report
       debug:
-        msg: "{{ item }}"
-      loop: "{{ backup_report.stdout_lines | default([]) }}"
+        msg:
+          - "✅ {{ ok_backups | length }} backups OK"
+          - "⚠️ {{ stale_backups | length }} stale (>{{ backup_max_age_hours }}h)"
+          - "{{ backup_report.stdout }}"
 
-    - name: Build stale backup list
+    - name: Build stale backup details
       set_fact:
-        stale_backups: "{{ backup_report.stdout_lines | default([]) | select('search', '\\|STALE\\|') | list }}"
-        ok_backups: "{{ backup_report.stdout_lines | default([]) | select('search', '\\|OK\\|') | list }}"
-
-    - name: Build Discord summary
-      set_fact:
-        discord_summary: |
-          💾 **PBS Backup Report** ({{ inventory_hostname }} - {{ ansible_host }})
-
-          ✅ {{ ok_backups | length }} backups OK | ⚠️ {{ stale_backups | length }} stale (>{{ backup_max_age_hours }}h)
-          {% if stale_backups | length > 0 %}
-
-          Stale backups:
+        stale_details: |
           {% for entry in stale_backups %}
           {% set parts = entry.split('|') %}
-          - {{ parts[0] }} ({{ parts[1] }}) - {{ parts[2] }}h old
+          - {{ parts[0] }} / {{ parts[1] }} - last: {{ parts[2] }} ({{ parts[3] }})
           {% endfor %}
-          {% endif %}
+      when: stale_backups | length > 0
 
     - name: Send Discord backup report
       uri:
@@ -77,15 +70,18 @@
         method: POST
         body_format: json
         body:
-          content: "{{ discord_summary }}"
+          content: "💾 **PBS Backup Report** ({{ inventory_hostname }} - {{ ansible_host }})\n\n✅ {{ ok_backups | length }} OK | ⚠️ {{ stale_backups | length }} stale (>{{ backup_max_age_hours }}h){{ '\n```\n' + stale_details + '```' if stale_backups | length > 0 else '' }}"
         headers:
           Content-Type: application/json
         status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
       when: discord_webhook_url is defined
 
-    - name: Check PBS datastore usage
-      shell: |
-        df -h /mnt/datastore/* 2>/dev/null || df -h / 2>/dev/null
+    - name: Get datastore disk usage
+      shell: df -h /mnt/datastore/* 2>/dev/null
       register: pbs_storage
       changed_when: false
 
@@ -99,4 +95,8 @@
         headers:
           Content-Type: application/json
         status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
       when: discord_webhook_url is defined
