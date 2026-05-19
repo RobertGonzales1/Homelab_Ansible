@@ -1,6 +1,6 @@
 ---
 - name: Check Disk Space and Alert via Discord
-  hosts: docker_vms
+  hosts: docker_vms:linux_vms
   become: true
   tasks:
 
@@ -16,7 +16,7 @@
 
     - name: Display disk usage
       debug:
-        msg: "{{ inventory_hostname }} root partition is {{ disk_usage.stdout }} used"
+        msg: "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] root partition is {{ disk_usage.stdout }} used"
 
     - name: Send Discord alert when disk space is over 80%
       uri:
@@ -24,7 +24,7 @@
         method: POST
         body_format: json
         body:
-          content: "⚠️ Disk space on {{ inventory_hostname }} is at {{ disk_usage.stdout }}!\n```\n{{ disk_usage_full.stdout }}\n```"
+          content: "⚠️ {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] is at {{ disk_usage.stdout }} disk usage!\n```\n{{ disk_usage_full.stdout }}\n```"
         headers:
           Content-Type: application/json
         status_code: 204

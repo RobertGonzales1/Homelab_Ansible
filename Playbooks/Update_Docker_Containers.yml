@@ -12,7 +12,7 @@
 
     - name: Display running containers
       debug:
-        msg: "{{ inventory_hostname }} - {{ running_containers.stdout_lines | length }} running containers"
+        msg: "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] - {{ running_containers.stdout_lines | length }} running containers"
 
     - name: Pull latest images for all running containers
       shell: docker ps --format '{{ '{{' }}.Image{{ '}}' }}' | sort -u | xargs -I {} docker pull {}
@@ -34,7 +34,7 @@
 
     - name: Display containers needing recreation
       debug:
-        msg: "{{ inventory_hostname }} - Containers with updates available: {{ outdated_containers.stdout_lines | default([]) | join(', ') | default('none', true) }}"
+        msg: "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] - Containers with updates available: {{ outdated_containers.stdout_lines | default([]) | join(', ') | default('none', true) }}"
 
     - name: Restart docker-compose stacks with updated images
       shell: |
@@ -58,7 +58,7 @@
         method: POST
         body_format: json
         body:
-          content: "🐳 {{ inventory_hostname }}: Pulled latest images for {{ running_containers.stdout_lines | length }} containers. {{ outdated_containers.stdout_lines | default([]) | length }} updated. Reclaimed {{ prune_result.images_space_reclaimed | default(0) | human_readable }}"
+          content: "🐳 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: Pulled latest images for {{ running_containers.stdout_lines | length }} containers. {{ outdated_containers.stdout_lines | default([]) | length }} updated. Reclaimed {{ prune_result.images_space_reclaimed | default(0) | human_readable }}"
         headers:
           Content-Type: application/json
         status_code: 204

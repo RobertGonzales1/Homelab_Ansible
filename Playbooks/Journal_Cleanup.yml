@@ -1,6 +1,6 @@
 ---
 - name: Journal Cleanup
-  hosts: all
+  hosts: docker_vms:linux_vms
   become: true
   vars:
     journal_max_age: 7d
@@ -13,7 +13,7 @@
 
     - name: Display current usage
       debug:
-        msg: "{{ inventory_hostname }} - {{ journal_before.stdout }}"
+        msg: "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] - {{ journal_before.stdout }}"
 
     - name: Vacuum journals older than retention period
       command: journalctl --vacuum-time={{ journal_max_age }}
@@ -56,7 +56,7 @@
         method: POST
         body_format: json
         body:
-          content: "🗑️ {{ inventory_hostname }}: Journal cleanup - Before: {{ journal_before.stdout }} | After: {{ journal_after.stdout }}{{ ' | journald size limit configured' if journald_config.changed else '' }}"
+          content: "🗑️ {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: Journal cleanup - Before: {{ journal_before.stdout }} | After: {{ journal_after.stdout }}{{ ' | journald size limit configured' if journald_config.changed else '' }}"
         headers:
           Content-Type: application/json
         status_code: 204

@@ -1,6 +1,6 @@
 ---
 - name: Check Memory Usage
-  hosts: all
+  hosts: docker_vms:linux_vms
   become: true
   vars:
     memory_threshold: 80
@@ -23,7 +23,7 @@
 
     - name: Display memory status
       debug:
-        msg: "{{ inventory_hostname }} - Memory usage: {{ memory_usage.stdout }}%{{ ' ⚠️ HIGH' if memory_usage.stdout | int > memory_threshold | int else '' }}"
+        msg: "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] - Memory usage: {{ memory_usage.stdout }}%{{ ' ⚠️ HIGH' if memory_usage.stdout | int > memory_threshold | int else '' }}"
 
     - name: Send Discord alert when memory is over threshold
       uri:
@@ -31,7 +31,7 @@
         method: POST
         body_format: json
         body:
-          content: "🧠 {{ inventory_hostname }}: Memory usage is at {{ memory_usage.stdout }}%!\n```\n{{ memory_detail.stdout }}\n\nTop processes:\n{{ top_processes.stdout }}\n```"
+          content: "🧠 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: Memory usage is at {{ memory_usage.stdout }}%!\n```\n{{ memory_detail.stdout }}\n\nTop processes:\n{{ top_processes.stdout }}\n```"
         headers:
           Content-Type: application/json
         status_code: 204

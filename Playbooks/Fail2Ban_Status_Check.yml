@@ -1,6 +1,6 @@
 ---
 - name: Fail2Ban Status Check
-  hosts: all
+  hosts: docker_vms:linux_vms
   become: true
   tasks:
 
@@ -37,7 +37,7 @@
     - name: Display Fail2Ban status
       debug:
         msg: >-
-          {{ inventory_hostname }} -
+          {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] -
           Fail2Ban {{ 'RUNNING' if f2b_status.rc == 0 else 'NOT RUNNING' }} |
           Currently banned: {{ banned_ips.stdout | default('none') }} |
           Total bans in log: {{ total_bans.stdout }}
@@ -48,7 +48,7 @@
         method: POST
         body_format: json
         body:
-          content: "🚨 {{ inventory_hostname }}: Fail2Ban is NOT running!"
+          content: "🚨 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: Fail2Ban is NOT running!"
         headers:
           Content-Type: application/json
         status_code: 204
@@ -62,7 +62,7 @@
         method: POST
         body_format: json
         body:
-          content: "🔒 {{ inventory_hostname }}: {{ total_bans.stdout }} total bans | Currently banned: {{ banned_ips.stdout | default('none', true) }}\n```\nTop offenders:\n{{ top_offenders.stdout | default('No bans recorded') }}\n```"
+          content: "🔒 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: {{ total_bans.stdout }} total bans | Currently banned: {{ banned_ips.stdout | default('none', true) }}\n```\nTop offenders:\n{{ top_offenders.stdout | default('No bans recorded') }}\n```"
         headers:
           Content-Type: application/json
         status_code: 204

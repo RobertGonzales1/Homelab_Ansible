@@ -18,7 +18,7 @@
 
     - name: Display upgradable packages
       debug:
-        msg: "{{ inventory_hostname }} - {{ upgradable.stdout_lines | length - 1 }} packages to upgrade"
+        msg: "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] - {{ upgradable.stdout_lines | length - 1 }} packages to upgrade"
 
     - name: Upgrade all packages
       apt:
@@ -38,7 +38,7 @@
         method: POST
         body_format: json
         body:
-          content: "📦 {{ inventory_hostname }}: {{ upgradable.stdout_lines | length - 1 }} packages upgraded. {{ '🔄 Rebooting now...' if reboot_required.stat.exists else '✅ No reboot needed.' }}"
+          content: "📦 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: {{ upgradable.stdout_lines | length - 1 }} packages upgraded. {{ '🔄 Rebooting now...' if reboot_required.stat.exists else '✅ No reboot needed.' }}"
         headers:
           Content-Type: application/json
         status_code: 204
@@ -68,7 +68,7 @@
         method: POST
         body_format: json
         body:
-          content: "✅ {{ inventory_hostname }}: Back online after reboot."
+          content: "✅ {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: Back online after reboot."
         headers:
           Content-Type: application/json
         status_code: 204
