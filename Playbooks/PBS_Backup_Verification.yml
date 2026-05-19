@@ -13,6 +13,9 @@
 
         for ds in /mnt/datastore/*/; do
           ds_name=$(basename "$ds")
+          ok=0
+          stale=0
+          stale_list=""
 
           for type_dir in "$ds"vm/ "$ds"ct/; do
             [ -d "$type_dir" ] || continue
@@ -30,47 +33,56 @@
                   age_sec=$(( now - snap_ts ))
                   age_h=$(( age_sec / 3600 ))
                   if [ "$age_sec" -gt "$threshold" ]; then
-                    status="STALE"
+                    stale=$((stale + 1))
+                    stale_list="${stale_list}  - ${backup_type}/${backup_id} (${age_h}h ago)\n"
                   else
-                    status="OK"
+                    ok=$((ok + 1))
                   fi
-                  echo "${ds_name}|${backup_type}/${backup_id}|${snap_name}|${age_h}h|${status}"
                 fi
               fi
             done
           done
+
+          echo "DATASTORE:${ds_name}|OK:${ok}|STALE:${stale}"
+          if [ -n "$stale_list" ]; then
+            printf "${stale_list}" | while read line; do
+              echo "DETAIL:${ds_name}|${line}"
+            done
+          fi
         done
       register: backup_report
       changed_when: false
 
-    - name: Build summary
+    - name: Parse datastore summaries
       set_fact:
-        stale_backups: "{{ backup_report.stdout_lines | default([]) | select('search', '\\|STALE$') | list }}"
-        ok_backups: "{{ backup_report.stdout_lines | default([]) | select('search', '\\|OK$') | list }}"
+        datastore_lines: "{{ backup_report.stdout_lines | default([]) | select('match', '^DATASTORE:') | list }}"
+        detail_lines: "{{ backup_report.stdout_lines | default([]) | select('match', '^DETAIL:') | list }}"
 
     - name: Display backup report
       debug:
-        msg:
-          - "✅ {{ ok_backups | length }} backups OK"
-          - "⚠️ {{ stale_backups | length }} stale (>{{ backup_max_age_hours }}h)"
-          - "{{ backup_report.stdout }}"
+        msg: "{{ backup_report.stdout_lines }}"
 
-    - name: Build stale backup details
-      set_fact:
-        stale_details: |
-          {% for entry in stale_backups %}
-          {% set parts = entry.split('|') %}
-          - {{ parts[0] }} / {{ parts[1] }} - last: {{ parts[2] }} ({{ parts[3] }})
-          {% endfor %}
-      when: stale_backups | length > 0
-
-    - name: Send Discord backup report
+    - name: Send Discord message per datastore
       uri:
         url: "{{ discord_webhook_url }}"
         method: POST
         body_format: json
         body:
-          content: "💾 **PBS Backup Report** ({{ inventory_hostname }} - {{ ansible_host }})\n\n✅ {{ ok_backups | length }} OK | ⚠️ {{ stale_backups | length }} stale (>{{ backup_max_age_hours }}h){{ '\n```\n' + stale_details + '```' if stale_backups | length > 0 else '' }}"
+          content: >-
+            💾 **{{ item.split('|')[0] | replace('DATASTORE:', '') }}**:
+            ✅ {{ item.split('|')[1] | replace('OK:', '') }} OK |
+            ⚠️ {{ item.split('|')[2] | replace('STALE:', '') }} stale
+            (>{{ backup_max_age_hours }}h)
+            {% set ds_name = item.split('|')[0] | replace('DATASTORE:', '') %}
+            {% set details = detail_lines | select('match', '^DETAIL:' + ds_name + '\\|') | list %}
+            {% if details | length > 0 %}
+
+            ```
+            {% for d in details %}
+            {{ d.split('|', 1)[1] }}
+            {% endfor %}
+            ```
+            {% endif %}
         headers:
           Content-Type: application/json
         status_code: 204
@@ -78,6 +90,7 @@
       until: discord_result.status == 204
       retries: 3
       delay: 3
+      loop: "{{ datastore_lines }}"
       when: discord_webhook_url is defined
 
     - name: Get datastore disk usage
@@ -91,7 +104,7 @@
         method: POST
         body_format: json
         body:
-          content: "📊 PBS Storage ({{ inventory_hostname }}):\n```\n{{ pbs_storage.stdout }}\n```"
+          content: "📊 PBS Storage:\n```\n{{ pbs_storage.stdout }}\n```"
         headers:
           Content-Type: application/json
         status_code: 204
