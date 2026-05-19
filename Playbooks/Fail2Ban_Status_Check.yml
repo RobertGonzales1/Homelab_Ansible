@@ -2,6 +2,7 @@
 - name: Fail2Ban Status Check
   hosts: docker_vms:linux_vms
   become: true
+  serial: 5
   tasks:
 
     - name: Check if Fail2Ban is running
@@ -52,6 +53,10 @@
         headers:
           Content-Type: application/json
         status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
       when:
         - discord_webhook_url is defined
         - f2b_status.rc != 0
@@ -66,6 +71,10 @@
         headers:
           Content-Type: application/json
         status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
       when:
         - discord_webhook_url is defined
         - f2b_status.rc == 0

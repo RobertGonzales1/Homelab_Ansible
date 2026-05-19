@@ -2,6 +2,7 @@
 - name: Container Health Check
   hosts: docker_vms
   become: true
+  serial: 5
   tasks:
 
     - name: Get unhealthy containers
@@ -77,6 +78,10 @@
         headers:
           Content-Type: application/json
         status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
       when:
         - discord_webhook_url is defined
         - has_problems | bool

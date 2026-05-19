@@ -2,6 +2,7 @@
 - name: Journal Cleanup
   hosts: docker_vms:linux_vms
   become: true
+  serial: 5
   vars:
     journal_max_age: 7d
   tasks:
@@ -60,6 +61,10 @@
         headers:
           Content-Type: application/json
         status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
       when:
         - discord_webhook_url is defined
         - vacuum_result.changed or journald_config.changed

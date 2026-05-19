@@ -2,6 +2,7 @@
 - name: Docker Log Rotation
   hosts: docker_vms
   become: true
+  serial: 5
   vars:
     max_log_size_mb: 100
   tasks:
@@ -64,6 +65,10 @@
         headers:
           Content-Type: application/json
         status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
       when:
         - discord_webhook_url is defined
         - (truncated.stdout | int > 0) or daemon_config.changed

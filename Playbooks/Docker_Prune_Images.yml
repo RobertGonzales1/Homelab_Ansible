@@ -2,6 +2,7 @@
 - name: Remove Unused Docker Images
   hosts: docker_vms
   become: true
+  serial: 5
   tasks:
 
     - name: Get list of dangling images before cleanup
@@ -40,6 +41,10 @@
         headers:
           Content-Type: application/json
         status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
       when:
         - discord_webhook_url is defined
         - prune_result.images | default([]) | length > 0

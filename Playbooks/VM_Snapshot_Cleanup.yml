@@ -2,6 +2,7 @@
 - name: VM Snapshot Cleanup
   hosts: proxmox
   become: true
+  serial: 5
   vars:
     snapshot_max_age_days: 7
   tasks:
@@ -78,6 +79,10 @@
         headers:
           Content-Type: application/json
         status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
       when:
         - discord_webhook_url is defined
         - (removed_snapshots.stdout | default('0') | int > 0) or (ct_snapshots.stdout_lines | default([]) | length > 0)

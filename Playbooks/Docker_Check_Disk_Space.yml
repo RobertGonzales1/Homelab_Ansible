@@ -2,6 +2,7 @@
 - name: Check Disk Space and Alert via Discord
   hosts: docker_vms:linux_vms
   become: true
+  serial: 5
   tasks:
 
     - name: Get full disk usage report
@@ -28,4 +29,8 @@
         headers:
           Content-Type: application/json
         status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
       when: disk_usage.stdout | replace('%', '') | int > 80
