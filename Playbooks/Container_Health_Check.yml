@@ -3,16 +3,19 @@
   hosts: docker_vms
   become: true
   serial: 5
+  vars:
+    ignored_containers:
+      - immich_machine_learning
   tasks:
 
     - name: Get unhealthy containers
       shell: docker ps --filter health=unhealthy --format '{{ '{{' }}.Names{{ '}}' }} ({{ '{{' }}.Status{{ '}}' }})'
-      register: unhealthy
+      register: unhealthy_raw
       changed_when: false
 
     - name: Get restarting containers
       shell: docker ps --filter status=restarting --format '{{ '{{' }}.Names{{ '}}' }} ({{ '{{' }}.Status{{ '}}' }})'
-      register: restarting
+      register: restarting_raw
       changed_when: false
 
     - name: Get exited containers (last 24h)
@@ -32,6 +35,13 @@
       register: recently_exited
       changed_when: false
 
+    - name: Filter out ignored containers
+      set_fact:
+        unhealthy: "{{ unhealthy_raw.stdout_lines | default([]) | reject('search', ignored_regex) | list }}"
+        restarting: "{{ restarting_raw.stdout_lines | default([]) | reject('search', ignored_regex) | list }}"
+      vars:
+        ignored_regex: "{{ '(' + (ignored_containers | join('|')) + ')' }}"
+
     - name: Get container resource usage
       shell: "docker stats --no-stream --format '{{ '{{' }}.Name{{ '}}' }}: CPU {{ '{{' }}.CPUPerc{{ '}}' }} | MEM {{ '{{' }}.MemUsage{{ '}}' }}'"
       register: container_stats
@@ -41,23 +51,23 @@
       debug:
         msg:
           - "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] Health Report:"
-          - "Unhealthy: {{ unhealthy.stdout_lines | default([]) | length }}"
-          - "Restarting: {{ restarting.stdout_lines | default([]) | length }}"
+          - "Unhealthy: {{ unhealthy | length }} ({{ unhealthy_raw.stdout_lines | length - unhealthy | length }} ignored)"
+          - "Restarting: {{ restarting | length }} ({{ restarting_raw.stdout_lines | length - restarting | length }} ignored)"
           - "Recently exited: {{ recently_exited.stdout_lines | default([]) | length }}"
 
     - name: Build problem report
       set_fact:
-        has_problems: "{{ (unhealthy.stdout_lines | default([]) | length > 0) or (restarting.stdout_lines | default([]) | length > 0) or (recently_exited.stdout_lines | default([]) | length > 0) }}"
+        has_problems: "{{ (unhealthy | length > 0) or (restarting | length > 0) or (recently_exited.stdout_lines | default([]) | length > 0) }}"
         problem_report: |
-          {% if unhealthy.stdout_lines | default([]) | length > 0 %}
+          {% if unhealthy | length > 0 %}
           ⛔ Unhealthy:
-          {% for c in unhealthy.stdout_lines %}
+          {% for c in unhealthy %}
           - {{ c }}
           {% endfor %}
           {% endif %}
-          {% if restarting.stdout_lines | default([]) | length > 0 %}
+          {% if restarting | length > 0 %}
           🔄 Restarting:
-          {% for c in restarting.stdout_lines %}
+          {% for c in restarting %}
           - {{ c }}
           {% endfor %}
           {% endif %}
