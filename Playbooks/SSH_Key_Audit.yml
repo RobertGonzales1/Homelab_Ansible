@@ -10,21 +10,6 @@
       register: password_auth
       changed_when: false
 
-    - name: Get all authorized_keys files
-      shell: |
-        for user_home in /root /home/*; do
-          keyfile="${user_home}/.ssh/authorized_keys"
-          if [ -f "$keyfile" ]; then
-            user=$(basename "$user_home")
-            [ "$user_home" = "/root" ] && user="root"
-            count=$(grep -c "^ssh-" "$keyfile" 2>/dev/null || echo 0)
-            keys=$(grep "^ssh-" "$keyfile" 2>/dev/null | awk '{print $NF}' | tr '\n' ', ' | sed 's/,$//')
-            echo "${user}|${count}|${keys}"
-          fi
-        done
-      register: ssh_keys
-      changed_when: false
-
     - name: Check for root login enabled
       shell: sshd -T 2>/dev/null | grep -i "permitrootlogin" | awk '{print $2}'
       register: root_login
@@ -35,6 +20,25 @@
       register: ssh_port
       changed_when: false
 
+    - name: Get authorized keys summary
+      shell: |
+        for user_home in /root /home/*; do
+          keyfile="${user_home}/.ssh/authorized_keys"
+          if [ -f "$keyfile" ]; then
+            user=$(basename "$user_home")
+            [ "$user_home" = "/root" ] && user="root"
+            count=$(grep -c "^ssh-" "$keyfile" 2>/dev/null || echo 0)
+            keys=$(grep "^ssh-" "$keyfile" 2>/dev/null | awk '{print $NF}' | tr '\n' ', ' | sed 's/,$//')
+            if [ "$count" -gt 0 ]; then
+              echo "  🔑 ${user}: ${count} key(s) [${keys}]"
+            else
+              echo "  🔑 ${user}: no keys"
+            fi
+          fi
+        done
+      register: ssh_keys_summary
+      changed_when: false
+
     - name: Display audit results
       debug:
         msg:
@@ -42,18 +46,11 @@
           - "Password auth: {{ password_auth.stdout | default('unknown') }}"
           - "Root login: {{ root_login.stdout | default('unknown') }}"
           - "SSH port: {{ ssh_port.stdout | default('unknown') }}"
-          - "Keys: {{ ssh_keys.stdout_lines | default([]) }}"
+          - "{{ ssh_keys_summary.stdout | default('No keys found') }}"
 
-    - name: Build security issues list
+    - name: Check for security issues
       set_fact:
         has_issues: "{{ (password_auth.stdout | default('no')) == 'yes' or (root_login.stdout | default('no')) == 'yes' }}"
-        issues: >-
-          {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]:
-          {% if (password_auth.stdout | default('no')) == 'yes' %}⚠️ Password auth ENABLED{% endif %}
-          {% if (root_login.stdout | default('no')) == 'yes' %} ⚠️ Root login ENABLED{% endif %}
-          {% for line in ssh_keys.stdout_lines | default([]) %}
-          🔑 {{ line.split('|')[0] }}: {{ line.split('|')[1] }} key(s) [{{ line.split('|')[2] }}]
-          {% endfor %}
 
     - name: Send Discord alert for security issues
       uri:
@@ -61,7 +58,7 @@
         method: POST
         body_format: json
         body:
-          content: "🔐 {{ issues }}"
+          content: "🔐 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]:{{ ' ⚠️ Password auth ENABLED!' if password_auth.stdout == 'yes' else '' }}{{ ' ⚠️ Root login ENABLED!' if root_login.stdout == 'yes' else '' }}\nPort: {{ ssh_port.stdout }}\n```\n{{ ssh_keys_summary.stdout }}\n```"
         headers:
           Content-Type: application/json
         status_code: 204
