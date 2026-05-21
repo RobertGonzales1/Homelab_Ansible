@@ -45,14 +45,15 @@
 
     - name: Check for ZFS errors
       shell: |
-        if command -v zpool &>/dev/null; then
-          problem_count=$(zpool status 2>/dev/null | grep "state:" | grep -c "DEGRADED\|FAULTED" || echo "0")
-          error_count=$(zpool status 2>/dev/null | grep "errors:" | grep -cv "No known data errors" || echo "0")
-          total=$((problem_count + error_count))
-          if [ "$total" -gt 0 ]; then
-            zpool status 2>/dev/null | grep -E "pool:|state:|errors:" | tr '\n' ' '
+        if command -v zpool >/dev/null 2>&1; then
+          degraded=$(zpool status 2>/dev/null | grep "state:" | grep -E "DEGRADED|FAULTED" || true)
+          errors=$(zpool status 2>/dev/null | grep "errors:" | grep -v "No known data errors" || true)
+          if [ -n "$degraded" ] || [ -n "$errors" ]; then
+            zpool status 2>/dev/null | grep -E "pool:|state:|errors:"
           fi
         fi
+      args:
+        executable: /bin/bash
       register: zfs_problems
       changed_when: false
 
