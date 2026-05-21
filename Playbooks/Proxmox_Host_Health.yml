@@ -99,7 +99,11 @@
       changed_when: false
 
     - name: Get memory usage
-      shell: "free -h | grep 'Mem:' | awk '{print \"RAM: \" $3 \" used / \" $2 \" total (\" int($3/$2*100) \"%)\"}'  "
+      shell: |
+        mem_used=$(free -h | awk '/Mem:/ {print $3}')
+        mem_total=$(free -h | awk '/Mem:/ {print $2}')
+        mem_pct=$(free | awk '/Mem:/ {printf "%.0f", $3/$2*100}')
+        echo "RAM ${mem_used} used / ${mem_total} total (${mem_pct}%)"
       register: memory_usage
       changed_when: false
 
