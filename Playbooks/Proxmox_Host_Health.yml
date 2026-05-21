@@ -1,0 +1,134 @@
+# Make sure smartmontools is installed on your PVE hosts (apt install smartmontools) or the SMART checks will return empty.
+---
+- name: Proxmox Host Health Check
+  hosts: proxmox
+  become: true
+  serial: 5
+  vars:
+    cpu_temp_warning: 80
+    disk_usage_warning: 85
+  tasks:
+
+    - name: Get CPU temperatures
+      shell: |
+        if command -v sensors &>/dev/null; then
+          sensors 2>/dev/null | grep -E "Core|Package|Tctl" | awk '{print $1, $2, $3}'
+        else
+          for zone in /sys/class/thermal/thermal_zone*/; do
+            type=$(cat "${zone}type" 2>/dev/null)
+            temp=$(cat "${zone}temp" 2>/dev/null)
+            if [ -n "$temp" ] && [ "$temp" -gt 0 ]; then
+              echo "${type}: $(python3 -c "print(round($temp/1000, 1))")°C"
+            fi
+          done
+        fi
+      register: cpu_temps
+      changed_when: false
+
+    - name: Get highest CPU temp
+      shell: |
+        max_temp=0
+        if command -v sensors &>/dev/null; then
+          max_temp=$(sensors 2>/dev/null | grep -oP '\+\K[0-9.]+(?=°C)' | sort -rn | head -1)
+        else
+          for zone in /sys/class/thermal/thermal_zone*/temp; do
+            temp=$(cat "$zone" 2>/dev/null || echo 0)
+            temp_c=$((temp / 1000))
+            [ "$temp_c" -gt "$max_temp" ] && max_temp=$temp_c
+          done
+        fi
+        echo "${max_temp:-0}"
+      register: max_temp
+      changed_when: false
+
+    - name: Get SMART disk status
+      shell: |
+        for disk in $(lsblk -dnpo NAME -e 7,11 2>/dev/null); do
+          model=$(smartctl -i "$disk" 2>/dev/null | grep "Device Model\|Model Number" | head -1 | sed 's/.*:\s*//')
+          health=$(smartctl -H "$disk" 2>/dev/null | grep -i "overall-health\|SMART Health Status" | sed 's/.*:\s*//')
+          temp=$(smartctl -A "$disk" 2>/dev/null | grep -i "temperature" | head -1 | awk '{print $(NF-1)}')
+          hours=$(smartctl -A "$disk" 2>/dev/null | grep -i "power_on_hours\|Power On Hours" | awk '{print $NF}')
+          reallocated=$(smartctl -A "$disk" 2>/dev/null | grep -i "reallocated_sector\|Reallocated" | awk '{print $NF}')
+
+          status="✅"
+          [ -n "$health" ] && echo "$health" | grep -qi "passed\|ok" || status="❌"
+          [ -n "$reallocated" ] && [ "$reallocated" -gt 0 ] 2>/dev/null && status="⚠️"
+
+          echo "${status} $(basename $disk): ${model:-unknown} | Health: ${health:-unknown} | Temp: ${temp:-N/A}°C | Hours: ${hours:-N/A} | Reallocated: ${reallocated:-N/A}"
+        done
+      register: smart_status
+      changed_when: false
+      failed_when: false
+
+    - name: Check ZFS pool health
+      shell: |
+        if command -v zpool &>/dev/null; then
+          zpool status 2>/dev/null | grep -E "pool:|state:|errors:" | while read line; do
+            echo "$line"
+          done
+          echo "---"
+          zpool list 2>/dev/null
+        else
+          echo "No ZFS pools found"
+        fi
+      register: zfs_status
+      changed_when: false
+      failed_when: false
+
+    - name: Check for ZFS errors
+      shell: |
+        if command -v zpool &>/dev/null; then
+          zpool status 2>/dev/null | grep -c "DEGRADED\|FAULTED\|OFFLINE\|UNAVAIL\|REMOVED" || echo "0"
+        else
+          echo "0"
+        fi
+      register: zfs_errors
+      changed_when: false
+
+    - name: Check for high disk usage
+      shell: df -h 2>/dev/null | awk 'NR>1 {gsub(/%/,"",$5); if ($5+0 > {{ disk_usage_warning }}) print $6 " at " $5 "%"}'
+      register: high_disk
+      changed_when: false
+
+    - name: Get system load
+      shell: |
+        load=$(cat /proc/loadavg | awk '{print $1, $2, $3}')
+        cpus=$(nproc)
+        echo "Load: ${load} (${cpus} CPUs)"
+      register: system_load
+      changed_when: false
+
+    - name: Get memory usage
+      shell: free -h | grep "Mem:" | awk '{print "RAM: " $3 " used / " $2 " total (" int($3/$2*100) "%)"}'
+      register: memory_usage
+      changed_when: false
+
+    - name: Build problem flags
+      set_fact:
+        temp_warning: "{{ max_temp.stdout | float > cpu_temp_warning | float }}"
+        smart_warning: "{{ '❌' in smart_status.stdout or '⚠️' in smart_status.stdout }}"
+        zfs_warning: "{{ zfs_errors.stdout | int > 0 }}"
+        disk_warning: "{{ high_disk.stdout_lines | default([]) | length > 0 }}"
+        has_problems: "{{ (max_temp.stdout | float > cpu_temp_warning | float) or ('❌' in smart_status.stdout) or ('⚠️' in smart_status.stdout) or (zfs_errors.stdout | int > 0) or (high_disk.stdout_lines | default([]) | length > 0) }}"
+
+    - name: Display health status
+      debug:
+        msg: "{{ inventory_hostname }} ({{ ansible_host }}): {{ system_load.stdout }} | {{ memory_usage.stdout }} | Temp: {{ max_temp.stdout }}°C | Problems: {{ has_problems }}"
+
+    - name: Send Discord critical alert
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "🚨 {{ inventory_hostname }} ({{ ansible_host }}):\n{{ system_load.stdout }} | {{ memory_usage.stdout }}{{ '\n🔥 CPU temp: ' + max_temp.stdout + '°C' if temp_warning else '' }}{{ '\n💀 SMART issue detected' if smart_warning else '' }}{{ '\n⚠️ ZFS pool degraded' if zfs_warning else '' }}{{ '\n📀 High disk usage: ' + high_disk.stdout if disk_warning else '' }}\n```\n{{ smart_status.stdout }}\n```\n```\n{{ zfs_status.stdout }}\n```"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
+      when:
+        - discord_webhook_url is defined
+        - has_problems | bool
