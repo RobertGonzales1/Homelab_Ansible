@@ -1,0 +1,55 @@
+---
+- name: Open Port Scan
+  hosts: docker_vms:linux_vms
+  become: true
+  serial: 5
+  vars:
+    expected_ports:
+      - "22"
+      - "2222"
+  tasks:
+
+    - name: Get all listening TCP ports
+      shell: ss -tlnp | awk 'NR>1 {print $4}' | rev | cut -d':' -f1 | rev | sort -un
+      register: open_ports
+      changed_when: false
+
+    - name: Get detailed listener info
+      shell: ss -tlnp | awk 'NR>1 {printf "%s -> %s\n", $4, $6}'
+      register: port_details
+      changed_when: false
+
+    - name: Get listening UDP ports
+      shell: ss -ulnp | awk 'NR>1 {print $4}' | rev | cut -d':' -f1 | rev | sort -un
+      register: udp_ports
+      changed_when: false
+
+    - name: Identify unexpected ports
+      set_fact:
+        unexpected_ports: "{{ open_ports.stdout_lines | default([]) | difference(expected_ports) }}"
+
+    - name: Display port scan results
+      debug:
+        msg:
+          - "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]"
+          - "TCP ports: {{ open_ports.stdout_lines | default([]) | join(', ') }}"
+          - "UDP ports: {{ udp_ports.stdout_lines | default([]) | join(', ') }}"
+          - "Unexpected: {{ unexpected_ports | join(', ') | default('none', true) }}"
+
+    - name: Send Discord alert for unexpected ports
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "🔍 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: {{ unexpected_ports | length }} unexpected ports open\n```\nTCP: {{ open_ports.stdout_lines | default([]) | join(', ') }}\nUDP: {{ udp_ports.stdout_lines | default([]) | join(', ') }}\n\nDetails:\n{{ port_details.stdout }}\n```"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
+      when:
+        - discord_webhook_url is defined
+        - unexpected_ports | length > 0
