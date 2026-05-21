@@ -1,0 +1,69 @@
+---
+- name: NTP Sync Check
+  hosts: docker_vms:linux_vms
+  become: true
+  serial: 5
+  vars:
+    max_offset_ms: 500
+  tasks:
+
+    - name: Check if timesyncd is active
+      command: timedatectl show --property=NTPSynchronized --value
+      register: ntp_synced
+      changed_when: false
+      failed_when: false
+
+    - name: Get time sync details
+      command: timedatectl timesync-status
+      register: sync_status
+      changed_when: false
+      failed_when: false
+
+    - name: Get current time offset
+      shell: |
+        if command -v chronyc &>/dev/null; then
+          offset=$(chronyc tracking 2>/dev/null | grep "Last offset" | awk '{print $4}')
+          echo "${offset:-unknown}"
+        else
+          offset=$(timedatectl timesync-status 2>/dev/null | grep "Offset" | awk '{print $2}')
+          echo "${offset:-unknown}"
+        fi
+      register: time_offset
+      changed_when: false
+
+    - name: Get configured NTP servers
+      shell: |
+        if [ -f /etc/systemd/timesyncd.conf ]; then
+          grep -i "^NTP\|^FallbackNTP" /etc/systemd/timesyncd.conf 2>/dev/null || echo "Using defaults"
+        elif command -v chronyc &>/dev/null; then
+          chronyc sources 2>/dev/null | head -5
+        else
+          echo "No NTP config found"
+        fi
+      register: ntp_servers
+      changed_when: false
+
+    - name: Display NTP status
+      debug:
+        msg:
+          - "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]"
+          - "Synchronized: {{ ntp_synced.stdout | default('unknown') }}"
+          - "Offset: {{ time_offset.stdout | default('unknown') }}"
+
+    - name: Send Discord alert if NTP is not synced
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "⏰ {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: NTP {{ 'NOT SYNCED ❌' if ntp_synced.stdout != 'yes' else 'synced ✅' }} | Offset: {{ time_offset.stdout | default('unknown') }}\n```\n{{ sync_status.stdout | default('No sync status available') }}\n```"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
+      when:
+        - discord_webhook_url is defined
+        - ntp_synced.stdout != 'yes'
