@@ -99,7 +99,7 @@
       changed_when: false
 
     - name: Get memory usage
-      shell: free -h | grep "Mem:" | awk '{print "RAM: " $3 " used / " $2 " total (" int($3/$2*100) "%)"}'
+      shell: "free -h | grep 'Mem:' | awk '{print \"RAM: \" $3 \" used / \" $2 \" total (\" int($3/$2*100) \"%)\"}'  "
       register: memory_usage
       changed_when: false
 
