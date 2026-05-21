@@ -1,0 +1,130 @@
+---
+- name: VM Resource Audit
+  hosts: proxmox
+  become: true
+  serial: 5
+  tasks:
+
+    - name: Get VM resource allocation vs usage
+      shell: |
+        echo "VMID|NAME|ALLOC_CPU|ALLOC_RAM_MB|USED_CPU%|USED_RAM%|STATUS"
+        for vmid in $(qm list | awk 'NR>1 {print $1}'); do
+          name=$(qm config $vmid 2>/dev/null | grep "^name:" | awk '{print $2}')
+          status=$(qm status $vmid 2>/dev/null | awk '{print $2}')
+          alloc_cpu=$(qm config $vmid 2>/dev/null | grep "^cores:" | awk '{print $2}')
+          alloc_mem=$(qm config $vmid 2>/dev/null | grep "^memory:" | awk '{print $2}')
+
+          if [ "$status" = "running" ]; then
+            usage=$(pvesh get /nodes/$(hostname)/qemu/$vmid/status/current --output-format json 2>/dev/null)
+            if [ -n "$usage" ]; then
+              used_cpu=$(echo "$usage" | python3 -c "import sys,json; d=json.load(sys.stdin); print(round(d.get('cpu',0)*100, 1))" 2>/dev/null || echo "0")
+              used_mem=$(echo "$usage" | python3 -c "import sys,json; d=json.load(sys.stdin); print(round(d.get('mem',0)/d.get('maxmem',1)*100, 1))" 2>/dev/null || echo "0")
+            else
+              used_cpu="N/A"
+              used_mem="N/A"
+            fi
+          else
+            used_cpu="stopped"
+            used_mem="stopped"
+          fi
+
+          echo "${vmid}|${name}|${alloc_cpu:-0}|${alloc_mem:-0}|${used_cpu}|${used_mem}|${status}"
+        done
+      register: vm_audit
+      changed_when: false
+
+    - name: Get CT resource allocation vs usage
+      shell: |
+        echo "CTID|NAME|ALLOC_CPU|ALLOC_RAM_MB|USED_CPU%|USED_RAM%|STATUS"
+        for ctid in $(pct list | awk 'NR>1 {print $1}'); do
+          name=$(pct config $ctid 2>/dev/null | grep "^hostname:" | awk '{print $2}')
+          status=$(pct status $ctid 2>/dev/null | awk '{print $2}')
+          alloc_cpu=$(pct config $ctid 2>/dev/null | grep "^cores:" | awk '{print $2}')
+          alloc_mem=$(pct config $ctid 2>/dev/null | grep "^memory:" | awk '{print $2}')
+
+          if [ "$status" = "running" ]; then
+            usage=$(pvesh get /nodes/$(hostname)/lxc/$ctid/status/current --output-format json 2>/dev/null)
+            if [ -n "$usage" ]; then
+              used_cpu=$(echo "$usage" | python3 -c "import sys,json; d=json.load(sys.stdin); print(round(d.get('cpu',0)*100, 1))" 2>/dev/null || echo "0")
+              used_mem=$(echo "$usage" | python3 -c "import sys,json; d=json.load(sys.stdin); print(round(d.get('mem',0)/d.get('maxmem',1)*100, 1))" 2>/dev/null || echo "0")
+            else
+              used_cpu="N/A"
+              used_mem="N/A"
+            fi
+          else
+            used_cpu="stopped"
+            used_mem="stopped"
+          fi
+
+          echo "${ctid}|${name}|${alloc_cpu:-0}|${alloc_mem:-0}|${used_cpu}|${used_mem}|${status}"
+        done
+      register: ct_audit
+      changed_when: false
+
+    - name: Get node total resources
+      shell: |
+        total_cpu=$(nproc)
+        total_mem=$(free -m | awk '/Mem:/ {print $2}')
+        used_mem=$(free -m | awk '/Mem:/ {print $3}')
+        alloc_cpu=0
+        alloc_mem=0
+        for vmid in $(qm list | awk 'NR>1 {print $1}'); do
+          cores=$(qm config $vmid 2>/dev/null | grep "^cores:" | awk '{print $2}')
+          mem=$(qm config $vmid 2>/dev/null | grep "^memory:" | awk '{print $2}')
+          alloc_cpu=$((alloc_cpu + ${cores:-0}))
+          alloc_mem=$((alloc_mem + ${mem:-0}))
+        done
+        for ctid in $(pct list | awk 'NR>1 {print $1}'); do
+          cores=$(pct config $ctid 2>/dev/null | grep "^cores:" | awk '{print $2}')
+          mem=$(pct config $ctid 2>/dev/null | grep "^memory:" | awk '{print $2}')
+          alloc_cpu=$((alloc_cpu + ${cores:-0}))
+          alloc_mem=$((alloc_mem + ${mem:-0}))
+        done
+        cpu_ratio=$(python3 -c "print(round($alloc_cpu / $total_cpu, 1))" 2>/dev/null)
+        mem_ratio=$(python3 -c "print(round($alloc_mem / $total_mem * 100, 1))" 2>/dev/null)
+        echo "CPUs: ${alloc_cpu} allocated / ${total_cpu} physical (${cpu_ratio}x overcommit)"
+        echo "RAM: ${alloc_mem}MB allocated / ${total_mem}MB physical (${mem_ratio}% committed)"
+        echo "RAM actual: ${used_mem}MB used / ${total_mem}MB total"
+      register: node_resources
+      changed_when: false
+
+    - name: Display audit results
+      debug:
+        msg:
+          - "{{ inventory_hostname }} ({{ ansible_host }}) Resource Audit:"
+          - "{{ node_resources.stdout }}"
+
+    - name: Find overprovisioned VMs (less than 10% CPU and less than 30% RAM used)
+      shell: |
+        overprovisioned=""
+        echo '{{ vm_audit.stdout }}' | tail -n +2 | while IFS='|' read vmid name acpu amem ucpu umem status; do
+          if [ "$status" = "running" ] && [ "$ucpu" != "N/A" ] && [ "$umem" != "N/A" ]; then
+            is_low_cpu=$(python3 -c "print('yes' if float('${ucpu}') < 10 else 'no')" 2>/dev/null)
+            is_low_mem=$(python3 -c "print('yes' if float('${umem}') < 30 else 'no')" 2>/dev/null)
+            if [ "$is_low_cpu" = "yes" ] && [ "$is_low_mem" = "yes" ]; then
+              echo "${name} (${vmid}): CPU ${ucpu}% / RAM ${umem}% [allocated: ${acpu} cores, ${amem}MB]"
+            fi
+          fi
+        done
+      register: overprovisioned_vms
+      changed_when: false
+
+    - name: Build Discord report
+      set_fact:
+        discord_msg: "📊 {{ inventory_hostname }} ({{ ansible_host }}) Resource Audit:\n```\n{{ node_resources.stdout }}\n```{{ '\nPotentially overprovisioned:\n```\n' + overprovisioned_vms.stdout + '\n```' if overprovisioned_vms.stdout | length > 0 else '\n✅ No overprovisioned VMs detected.' }}"
+
+    - name: Send Discord report
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "{{ discord_msg }}"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
+      when: discord_webhook_url is defined
