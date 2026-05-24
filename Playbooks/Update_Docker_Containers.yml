@@ -3,6 +3,9 @@
   hosts: docker_vms
   become: true
   serial: 5
+  vars:
+    ignored_images:
+      - huntarr/huntarr
   tasks:
 
     - name: Get list of running containers
@@ -15,7 +18,7 @@
         msg: "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] - {{ running_containers.stdout_lines | length }} running containers"
 
     - name: Pull latest images for all running containers
-      shell: docker ps --format '{{ '{{' }}.Image{{ '}}' }}' | sort -u | grep -v '^[0-9a-f]\{12\}' | xargs -I {} docker pull {}
+      shell: docker ps --format '{{ '{{' }}.Image{{ '}}' }}' | sort -u | grep -v '^[0-9a-f]\{12\}' | grep -v '{{ ignored_images | join("\\|") }}' | xargs -I {} docker pull {}
       register: pull_result
       changed_when: "'Downloaded newer image' in pull_result.stdout"
 
