@@ -15,7 +15,7 @@
         msg: "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] - {{ running_containers.stdout_lines | length }} running containers"
 
     - name: Pull latest images for all running containers
-      shell: docker ps --format '{{ '{{' }}.Image{{ '}}' }}' | sort -u | xargs -I {} docker pull {}
+      shell: docker ps --format '{{ '{{' }}.Image{{ '}}' }}' | sort -u | grep -v '^[0-9a-f]\{12\}' | xargs -I {} docker pull {}
       register: pull_result
       changed_when: "'Downloaded newer image' in pull_result.stdout"
 
