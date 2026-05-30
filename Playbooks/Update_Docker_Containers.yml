@@ -55,23 +55,36 @@
           dangling: false
       register: prune_result
 
-    - name: Find containers with untagged image IDs
+    - name: Find and fix containers with untagged image IDs
       shell: |
+        fixed=""
+        failed=""
         docker ps --format '{{ '{{' }}.Names{{ '}}' }} {{ '{{' }}.Image{{ '}}' }}' | while read name image; do
           if echo "$image" | grep -qE '^[0-9a-f]{12}$'; then
-            echo "$name ($image)"
+            project_dir=$(docker inspect --format '{{ '{{' }}index .Config.Labels "com.docker.compose.project.working_dir"{{ '}}' }}' "$name" 2>/dev/null)
+            if [ -n "$project_dir" ] && [ -d "$project_dir" ]; then
+              cd "$project_dir"
+              docker compose pull 2>/dev/null && docker compose up -d 2>/dev/null
+              if [ $? -eq 0 ]; then
+                echo "FIXED|$name|$project_dir"
+              else
+                echo "FAILED|$name|$project_dir"
+              fi
+            else
+              echo "FAILED|$name|no compose file found"
+            fi
           fi
         done
-      register: untagged_containers
-      changed_when: false
+      register: untagged_fix
+      changed_when: "'FIXED' in untagged_fix.stdout"
 
-    - name: Send Discord alert for untagged containers
+    - name: Send Discord alert for fixed untagged containers
       uri:
         url: "{{ discord_webhook_url }}"
         method: POST
         body_format: json
         body:
-          content: "⚠️ {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: {{ untagged_containers.stdout_lines | length }} container(s) running from untagged image IDs and cannot be updated automatically. Run `docker compose pull && docker compose up -d` to fix.\n```\n{{ untagged_containers.stdout }}\n```"
+          content: "🔧 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: Auto-fixed untagged containers:\n```\n{{ untagged_fix.stdout }}\n```"
         headers:
           Content-Type: application/json
         status_code: 204
@@ -81,7 +94,25 @@
       delay: 3
       when:
         - discord_webhook_url is defined
-        - untagged_containers.stdout_lines | default([]) | length > 0
+        - "'FIXED' in untagged_fix.stdout"
+
+    - name: Send Discord alert for unfixable containers
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "⚠️ {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: Could not auto-fix these untagged containers. Manual intervention needed:\n```\n{{ untagged_fix.stdout_lines | select('match', '^FAILED') | list | join('\n') }}\n```"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
+      when:
+        - discord_webhook_url is defined
+        - "'FAILED' in untagged_fix.stdout"
 
     - name: Send Discord notification for Docker updates
       uri:
