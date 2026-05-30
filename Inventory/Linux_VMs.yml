@@ -10,6 +10,7 @@ uptimekuma       ansible_host=10.30.1.115  proxmox_node=pvelins01n01
 convertx         ansible_host=10.30.1.118  proxmox_node=pvelins01n01
 speedtest        ansible_host=10.30.1.120  proxmox_node=pvelins01n01
 cleanuparr       ansible_host=10.30.1.129  proxmox_node=pvelins01n01
+semaphore        ansible_host=10.30.1.19   proxmox_node=pvelins01n01
 autobrr          ansible_host=10.30.1.108  proxmox_node=pvelins02n01
 nginx            ansible_host=10.30.1.116  proxmox_node=pvelins02n01
 flaresolver      ansible_host=10.30.1.117  proxmox_node=pvelins02n01
@@ -41,7 +42,6 @@ pbs01            ansible_host=10.30.1.5
 [proxmox:vars]
 ansible_port=22
 ansible_user=root
-ansible_python_interpreter=/usr/bin/python3
 
 [pbs:vars]
 ansible_port=22
