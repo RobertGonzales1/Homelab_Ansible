@@ -55,6 +55,34 @@
           dangling: false
       register: prune_result
 
+    - name: Find containers with untagged image IDs
+      shell: |
+        docker ps --format '{{ '{{' }}.Names{{ '}}' }} {{ '{{' }}.Image{{ '}}' }}' | while read name image; do
+          if echo "$image" | grep -qE '^[0-9a-f]{12}$'; then
+            echo "$name ($image)"
+          fi
+        done
+      register: untagged_containers
+      changed_when: false
+
+    - name: Send Discord alert for untagged containers
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "⚠️ {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: {{ untagged_containers.stdout_lines | length }} container(s) running from untagged image IDs and cannot be updated automatically. Run `docker compose pull && docker compose up -d` to fix.\n```\n{{ untagged_containers.stdout }}\n```"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
+      when:
+        - discord_webhook_url is defined
+        - untagged_containers.stdout_lines | default([]) | length > 0
+
     - name: Send Discord notification for Docker updates
       uri:
         url: "{{ discord_webhook_url }}"
