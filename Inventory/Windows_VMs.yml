@@ -1,23 +1,8 @@
-[windows_11]
-#ddhl01           ansible_host=10.30.1.20   proxmox_node=pvewins01n01
-#hydrus           ansible_host=10.30.1.21   proxmox_node=pvewins01n01
-#curecoin         ansible_host=10.30.1.22   proxmox_node=pvewins01n01
-#ftm              ansible_host=10.30.1.23   proxmox_node=pvewins01n01
-#steam            ansible_host=10.30.1.24   proxmox_node=pvewins01n01
-#gmr              ansible_host=10.30.1.25   proxmox_node=pvewins01n01
-#exo              ansible_host=10.30.1.26   proxmox_node=pvewins01n01
-#ddhl02           ansible_host=10.30.1.28   proxmox_node=pvewins02n01
-#tivo             ansible_host=10.30.1.29   proxmox_node=pvewins02n01
-#filezilla        ansible_host=10.30.1.30   proxmox_node=pvewins02n01
-#jdownloader      ansible_host=10.30.1.31   proxmox_node=pvewins02n01
-
 [windows_server]
-tdarr01          ansible_host=10.30.1.2    proxmox_node=pvewins01n01
 sonarrtv         ansible_host=10.30.1.11   proxmox_node=pvewins01n01
 sonarrrobert     ansible_host=10.30.1.17   proxmox_node=pvewins01n01
 radarrrobert     ansible_host=10.30.1.18   proxmox_node=pvewins01n01
 mailstore01      ansible_host=10.30.1.27   proxmox_node=pvewins01n01
-tdarr02          ansible_host=10.30.1.3    proxmox_node=pvewins02n01
 radarrmov        ansible_host=10.30.1.13   proxmox_node=pvewins02n01
 jellyfin         ansible_host=10.30.1.15   proxmox_node=pvewins02n01
 iis01            ansible_host=10.30.1.16   proxmox_node=pvewins02n01
@@ -30,14 +15,8 @@ btpritv          ansible_host=10.30.1.37   proxmox_node=pvewins02n01
 btprimov         ansible_host=10.30.1.38   proxmox_node=pvewins02n01
 btpuboth         ansible_host=10.30.1.39   proxmox_node=pvewins02n01
 
-[all:vars]
+[windows_server:vars]
 ansible_connection=winrm
 ansible_winrm_transport=ntlm
 ansible_winrm_port=5985
 ansible_winrm_scheme=http
-
-[windows_11:vars]
-ansible_user=Windows_VM_Admin_Login
-
-[windows_server:vars]
-ansible_user=Windows_Server_Admin_Login
