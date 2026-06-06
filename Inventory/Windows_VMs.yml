@@ -1,15 +1,15 @@
 [windows_11]
-ddhl01           ansible_host=10.30.1.20   proxmox_node=pvewins01n01
-hydrus           ansible_host=10.30.1.21   proxmox_node=pvewins01n01
-curecoin         ansible_host=10.30.1.22   proxmox_node=pvewins01n01
-ftm              ansible_host=10.30.1.23   proxmox_node=pvewins01n01
-steam            ansible_host=10.30.1.24   proxmox_node=pvewins01n01
-gmr              ansible_host=10.30.1.25   proxmox_node=pvewins01n01
-exo              ansible_host=10.30.1.26   proxmox_node=pvewins01n01
-ddhl02           ansible_host=10.30.1.28   proxmox_node=pvewins02n01
-tivo             ansible_host=10.30.1.29   proxmox_node=pvewins02n01
-filezilla        ansible_host=10.30.1.30   proxmox_node=pvewins02n01
-jdownloader      ansible_host=10.30.1.31   proxmox_node=pvewins02n01
+#ddhl01           ansible_host=10.30.1.20   proxmox_node=pvewins01n01
+#hydrus           ansible_host=10.30.1.21   proxmox_node=pvewins01n01
+#curecoin         ansible_host=10.30.1.22   proxmox_node=pvewins01n01
+#ftm              ansible_host=10.30.1.23   proxmox_node=pvewins01n01
+#steam            ansible_host=10.30.1.24   proxmox_node=pvewins01n01
+#gmr              ansible_host=10.30.1.25   proxmox_node=pvewins01n01
+#exo              ansible_host=10.30.1.26   proxmox_node=pvewins01n01
+#ddhl02           ansible_host=10.30.1.28   proxmox_node=pvewins02n01
+#tivo             ansible_host=10.30.1.29   proxmox_node=pvewins02n01
+#filezilla        ansible_host=10.30.1.30   proxmox_node=pvewins02n01
+#jdownloader      ansible_host=10.30.1.31   proxmox_node=pvewins02n01
 
 [windows_server]
 tdarr01          ansible_host=10.30.1.2    proxmox_node=pvewins01n01
