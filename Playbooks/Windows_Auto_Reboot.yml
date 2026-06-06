@@ -1,21 +1,32 @@
 ---
 - name: Windows Auto-Reboot Stale VMs
   hosts: all
+  gather_facts: false
   serial: 5
+  ignore_unreachable: true
   vars:
     max_uptime_days: 14
   tasks:
+
+    - name: Check host is reachable
+      win_ping:
+      register: host_check
+      failed_when: false
 
     - name: Get uptime in days
       win_shell: |
         $boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime
         $days = [math]::Round(((Get-Date) - $boot).TotalDays, 1)
         Write-Output $days
-      register: uptime_days
+      register: uptime_result
+      when: host_check is succeeded
 
     - name: Display uptime
       debug:
-        msg: "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] - {{ uptime_days.stdout | trim }} days uptime"
+        msg: "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] - {{ uptime_result.stdout | trim }} days uptime"
+      when:
+        - host_check is succeeded
+        - uptime_result.stdout is defined
 
     - name: Send Discord notification before reboot
       uri:
@@ -23,7 +34,7 @@
         method: POST
         body_format: json
         body:
-          content: "🔄 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: {{ uptime_days.stdout | trim }} days uptime (>{{ max_uptime_days }}). Rebooting now..."
+          content: "🔄 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: {{ uptime_result.stdout | trim }} days uptime (>{{ max_uptime_days }}). Rebooting now..."
         headers:
           Content-Type: application/json
         status_code: 204
@@ -34,13 +45,18 @@
       delegate_to: localhost
       when:
         - discord_webhook_url is defined
-        - uptime_days.stdout | trim | float > max_uptime_days | float
+        - host_check is succeeded
+        - uptime_result.stdout is defined
+        - uptime_result.stdout | trim | float > max_uptime_days | float
 
     - name: Reboot VM
       win_reboot:
         reboot_timeout: 600
         msg: "Ansible scheduled reboot - uptime exceeded {{ max_uptime_days }} days"
-      when: uptime_days.stdout | trim | float > max_uptime_days | float
+      when:
+        - host_check is succeeded
+        - uptime_result.stdout is defined
+        - uptime_result.stdout | trim | float > max_uptime_days | float
 
     - name: Send Discord notification after reboot
       uri:
@@ -59,4 +75,25 @@
       delegate_to: localhost
       when:
         - discord_webhook_url is defined
-        - uptime_days.stdout | trim | float > max_uptime_days | float
+        - host_check is succeeded
+        - uptime_result.stdout is defined
+        - uptime_result.stdout | trim | float > max_uptime_days | float
+
+    - name: Send Discord alert for unreachable hosts
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "⚠️ {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: Unreachable - skipped reboot check"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
+      delegate_to: localhost
+      when:
+        - discord_webhook_url is defined
+        - host_check is not succeeded
