@@ -1,0 +1,62 @@
+---
+- name: Windows Auto-Reboot Stale VMs
+  hosts: all
+  serial: 5
+  vars:
+    max_uptime_days: 14
+  tasks:
+
+    - name: Get uptime in days
+      win_shell: |
+        $boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime
+        $days = [math]::Round(((Get-Date) - $boot).TotalDays, 1)
+        Write-Output $days
+      register: uptime_days
+
+    - name: Display uptime
+      debug:
+        msg: "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] - {{ uptime_days.stdout | trim }} days uptime"
+
+    - name: Send Discord notification before reboot
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "🔄 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: {{ uptime_days.stdout | trim }} days uptime (>{{ max_uptime_days }}). Rebooting now..."
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
+      delegate_to: localhost
+      when:
+        - discord_webhook_url is defined
+        - uptime_days.stdout | trim | float > max_uptime_days | float
+
+    - name: Reboot VM
+      win_reboot:
+        reboot_timeout: 600
+        msg: "Ansible scheduled reboot - uptime exceeded {{ max_uptime_days }} days"
+      when: uptime_days.stdout | trim | float > max_uptime_days | float
+
+    - name: Send Discord notification after reboot
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "✅ {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: Back online after scheduled reboot."
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
+      delegate_to: localhost
+      when:
+        - discord_webhook_url is defined
+        - uptime_days.stdout | trim | float > max_uptime_days | float

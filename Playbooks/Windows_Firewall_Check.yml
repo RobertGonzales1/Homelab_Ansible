@@ -1,0 +1,59 @@
+---
+- name: Windows Firewall Status Check
+  hosts: all
+  serial: 5
+  tasks:
+
+    - name: Get firewall profile status
+      win_shell: |
+        Get-NetFirewallProfile | ForEach-Object {
+          "$($_.Name): Enabled=$($_.Enabled) DefaultInbound=$($_.DefaultInboundAction) DefaultOutbound=$($_.DefaultOutboundAction)"
+        }
+      register: firewall_profiles
+
+    - name: Check for disabled firewall profiles
+      win_shell: |
+        $disabled = @()
+        Get-NetFirewallProfile | Where-Object { -not $_.Enabled } | ForEach-Object {
+          $disabled += $_.Name
+        }
+        if ($disabled.Count -gt 0) {
+          Write-Output "DISABLED: $($disabled -join ', ')"
+        } else {
+          Write-Output "ALL_ENABLED"
+        }
+      register: firewall_status
+
+    - name: Get recently added firewall rules (last 30 days)
+      win_shell: |
+        Get-NetFirewallRule | Where-Object {
+          $_.Direction -eq 'Inbound' -and $_.Action -eq 'Allow' -and $_.Enabled -eq 'True'
+        } | Select-Object -Property DisplayName, Direction, Action |
+          Format-Table -AutoSize | Out-String -Width 120
+      register: inbound_rules
+
+    - name: Display firewall status
+      debug:
+        msg:
+          - "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]"
+          - "{{ firewall_profiles.stdout }}"
+          - "Status: {{ firewall_status.stdout | trim }}"
+
+    - name: Send Discord alert if firewall is disabled
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "🚨 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: Windows Firewall {{ firewall_status.stdout | trim }}\n```\n{{ firewall_profiles.stdout }}\n```"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
+      delegate_to: localhost
+      when:
+        - discord_webhook_url is defined
+        - "'DISABLED' in firewall_status.stdout"

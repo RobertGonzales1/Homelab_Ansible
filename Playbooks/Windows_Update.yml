@@ -1,0 +1,49 @@
+---
+- name: Windows Update
+  hosts: all
+  serial: 5
+  tasks:
+
+    - name: Check for available updates
+      win_updates:
+        category_names:
+          - SecurityUpdates
+          - CriticalUpdates
+          - UpdateRollups
+          - Updates
+        state: searched
+      register: available_updates
+
+    - name: Display available updates
+      debug:
+        msg: "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] - {{ available_updates.found_update_count }} updates available"
+
+    - name: Install updates and reboot if needed
+      win_updates:
+        category_names:
+          - SecurityUpdates
+          - CriticalUpdates
+          - UpdateRollups
+          - Updates
+        reboot: true
+        reboot_timeout: 600
+      register: update_result
+
+    - name: Send Discord notification
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "📦 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: {{ update_result.installed_update_count | default(0) }} updates installed.{{ ' 🔄 Rebooted.' if update_result.reboot_required | default(false) else '' }}"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
+      delegate_to: localhost
+      when:
+        - discord_webhook_url is defined
+        - update_result.installed_update_count | default(0) > 0

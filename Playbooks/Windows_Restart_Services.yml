@@ -1,0 +1,55 @@
+---
+- name: Windows Restart Stopped Automatic Services
+  hosts: all
+  serial: 5
+  tasks:
+
+    - name: Find and restart stopped automatic services
+      win_shell: |
+        $restarted = @()
+        $failed = @()
+        Get-Service | Where-Object {
+          $_.StartType -eq 'Automatic' -and $_.Status -ne 'Running'
+        } | ForEach-Object {
+          try {
+            Start-Service $_.Name -ErrorAction Stop
+            $restarted += "$($_.Name) ($($_.DisplayName))"
+          } catch {
+            $failed += "$($_.Name) ($($_.DisplayName)) - $($_.Exception.Message)"
+          }
+        }
+        if ($restarted.Count -gt 0) {
+          Write-Output "RESTARTED:"
+          $restarted | ForEach-Object { Write-Output "  $_" }
+        }
+        if ($failed.Count -gt 0) {
+          Write-Output "FAILED:"
+          $failed | ForEach-Object { Write-Output "  $_" }
+        }
+        if ($restarted.Count -eq 0 -and $failed.Count -eq 0) {
+          Write-Output "ALL_RUNNING"
+        }
+      register: service_restart
+
+    - name: Display results
+      debug:
+        msg: "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: {{ service_restart.stdout | trim }}"
+
+    - name: Send Discord alert for restarted services
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "🔧 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]:\n```\n{{ service_restart.stdout }}\n```"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
+      delegate_to: localhost
+      when:
+        - discord_webhook_url is defined
+        - "'ALL_RUNNING' not in service_restart.stdout"

@@ -1,0 +1,64 @@
+---
+- name: Windows Local Admin Account Audit
+  hosts: all
+  serial: 5
+  tasks:
+
+    - name: Get local administrators group members
+      win_shell: |
+        Get-LocalGroupMember -Group "Administrators" | ForEach-Object {
+          "$($_.ObjectClass): $($_.Name) ($($_.PrincipalSource))"
+        }
+      register: admin_members
+
+    - name: Check for enabled guest account
+      win_shell: |
+        $guest = Get-LocalUser -Name "Guest" -ErrorAction SilentlyContinue
+        if ($guest -and $guest.Enabled) { Write-Output "ENABLED" } else { Write-Output "DISABLED" }
+      register: guest_account
+
+    - name: Check for accounts with no password expiry
+      win_shell: |
+        Get-LocalUser | Where-Object { $_.Enabled -and $_.PasswordExpires -eq $null } | ForEach-Object {
+          "$($_.Name) - Password never expires | Last logon: $($_.LastLogon)"
+        }
+      register: no_expiry_accounts
+
+    - name: Check for accounts with no password required
+      win_shell: |
+        Get-LocalUser | Where-Object { $_.Enabled -and $_.PasswordRequired -eq $false } | ForEach-Object {
+          "$($_.Name) - No password required!"
+        }
+      register: no_password_accounts
+
+    - name: Display audit results
+      debug:
+        msg:
+          - "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]"
+          - "Administrators: {{ admin_members.stdout_lines | default([]) | length }}"
+          - "Guest account: {{ guest_account.stdout | trim }}"
+          - "No password expiry: {{ no_expiry_accounts.stdout_lines | default([]) | length }}"
+          - "No password required: {{ no_password_accounts.stdout_lines | default([]) | length }}"
+
+    - name: Build issue flags
+      set_fact:
+        has_issues: "{{ (guest_account.stdout | trim == 'ENABLED') or (no_password_accounts.stdout_lines | default([]) | length > 0) }}"
+
+    - name: Send Discord alert for security issues
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "🔐 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]:{{ ' ⚠️ Guest account ENABLED!' if guest_account.stdout | trim == 'ENABLED' else '' }}{{ ' ⚠️ Accounts with no password: ' + no_password_accounts.stdout if no_password_accounts.stdout_lines | default([]) | length > 0 else '' }}\n```\nAdministrators:\n{{ admin_members.stdout }}\n\nNo password expiry:\n{{ no_expiry_accounts.stdout | default('None') }}\n```"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
+      delegate_to: localhost
+      when:
+        - discord_webhook_url is defined
+        - has_issues | bool

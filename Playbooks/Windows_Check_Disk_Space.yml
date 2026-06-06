@@ -1,0 +1,48 @@
+---
+- name: Windows Disk Space Check
+  hosts: all
+  serial: 5
+  tasks:
+
+    - name: Get disk space usage
+      win_shell: |
+        Get-WmiObject Win32_LogicalDisk -Filter "DriveType=3" | ForEach-Object {
+          $pct = [math]::Round(($_.Size - $_.FreeSpace) / $_.Size * 100, 1)
+          $free = [math]::Round($_.FreeSpace / 1GB, 1)
+          $total = [math]::Round($_.Size / 1GB, 1)
+          "$($_.DeviceID) $pct% used ($free GB free / $total GB total)"
+        }
+      register: disk_usage
+
+    - name: Check for high disk usage
+      win_shell: |
+        $alert = $false
+        Get-WmiObject Win32_LogicalDisk -Filter "DriveType=3" | ForEach-Object {
+          $pct = [math]::Round(($_.Size - $_.FreeSpace) / $_.Size * 100, 1)
+          if ($pct -gt 80) { $alert = $true }
+        }
+        if ($alert) { Write-Output "ALERT" } else { Write-Output "OK" }
+      register: disk_alert
+
+    - name: Display disk usage
+      debug:
+        msg: "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: {{ disk_usage.stdout_lines | join(', ') }}"
+
+    - name: Send Discord alert when disk space is over 80%
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "⚠️ {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] disk usage high!\n```\n{{ disk_usage.stdout }}\n```"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
+      delegate_to: localhost
+      when:
+        - discord_webhook_url is defined
+        - "'ALERT' in disk_alert.stdout"

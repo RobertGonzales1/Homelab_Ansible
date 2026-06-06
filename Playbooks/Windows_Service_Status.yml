@@ -1,0 +1,72 @@
+---
+- name: Windows Service Status Check
+  hosts: all
+  serial: 5
+  tasks:
+
+    - name: Get all non-running automatic services
+      win_shell: |
+        Get-Service | Where-Object {
+          $_.StartType -eq 'Automatic' -and $_.Status -ne 'Running'
+        } | ForEach-Object {
+          "$($_.Name) ($($_.DisplayName)) - $($_.Status)"
+        }
+      register: stopped_services
+
+    - name: Get critical service status
+      win_shell: |
+        $critical = @('WinRM', 'W32Time', 'EventLog', 'Winmgmt', 'LanmanServer', 'LanmanWorkstation')
+        foreach ($svc in $critical) {
+          $s = Get-Service -Name $svc -ErrorAction SilentlyContinue
+          if ($s) {
+            if ($s.Status -ne 'Running') {
+              Write-Output "FAILED|$($s.Name)|$($s.DisplayName)|$($s.Status)"
+            }
+          }
+        }
+      register: critical_services
+
+    - name: Display service status
+      debug:
+        msg:
+          - "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]"
+          - "Stopped automatic services: {{ stopped_services.stdout_lines | default([]) | length }}"
+          - "Critical service issues: {{ critical_services.stdout_lines | default([]) | length }}"
+
+    - name: Send Discord alert for stopped services
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "🛑 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: {{ stopped_services.stdout_lines | length }} automatic services not running\n```\n{{ stopped_services.stdout }}\n```"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
+      delegate_to: localhost
+      when:
+        - discord_webhook_url is defined
+        - stopped_services.stdout_lines | default([]) | length > 0
+
+    - name: Send Discord critical alert
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "🚨 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: Critical services down!\n```\n{{ critical_services.stdout }}\n```"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
+      delegate_to: localhost
+      when:
+        - discord_webhook_url is defined
+        - critical_services.stdout_lines | default([]) | length > 0

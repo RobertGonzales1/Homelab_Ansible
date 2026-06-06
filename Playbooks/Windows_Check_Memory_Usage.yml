@@ -1,0 +1,51 @@
+---
+- name: Windows Memory Usage Check
+  hosts: all
+  serial: 5
+  vars:
+    memory_threshold: 80
+  tasks:
+
+    - name: Get memory usage
+      win_shell: |
+        $os = Get-WmiObject Win32_OperatingSystem
+        $total = [math]::Round($os.TotalVisibleMemorySize / 1MB, 1)
+        $free = [math]::Round($os.FreePhysicalMemory / 1MB, 1)
+        $used = [math]::Round($total - $free, 1)
+        $pct = [math]::Round($used / $total * 100, 0)
+        Write-Output "PERCENT:$pct"
+        Write-Output "RAM: ${used}GB used / ${total}GB total (${pct}%)"
+      register: memory_usage
+
+    - name: Get top memory processes
+      win_shell: |
+        Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First 5 |
+          ForEach-Object { "$($_.Name): $([math]::Round($_.WorkingSet64 / 1MB, 0))MB" }
+      register: top_processes
+
+    - name: Extract percentage
+      set_fact:
+        mem_pct: "{{ memory_usage.stdout_lines | select('match', '^PERCENT:') | first | replace('PERCENT:', '') }}"
+
+    - name: Display memory status
+      debug:
+        msg: "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] - {{ memory_usage.stdout_lines | reject('match', '^PERCENT:') | join('') }}"
+
+    - name: Send Discord alert when memory is over threshold
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "🧠 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: {{ memory_usage.stdout_lines | reject('match', '^PERCENT:') | join('') }}\n```\nTop processes:\n{{ top_processes.stdout }}\n```"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
+      delegate_to: localhost
+      when:
+        - discord_webhook_url is defined
+        - mem_pct | int > memory_threshold | int

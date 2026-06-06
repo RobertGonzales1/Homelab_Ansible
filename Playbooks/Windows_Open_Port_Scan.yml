@@ -1,0 +1,53 @@
+---
+- name: Windows Open Port Scan
+  hosts: all
+  serial: 5
+  vars:
+    expected_ports:
+      - 5985
+      - 3389
+  tasks:
+
+    - name: Get all listening TCP ports
+      win_shell: |
+        Get-NetTCPConnection -State Listen | Select-Object -Property LocalPort -Unique |
+          Sort-Object LocalPort | ForEach-Object { $_.LocalPort }
+      register: open_ports
+
+    - name: Get detailed listener info
+      win_shell: |
+        Get-NetTCPConnection -State Listen | ForEach-Object {
+          $proc = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue
+          "$($_.LocalPort) -> $($proc.Name) (PID: $($_.OwningProcess))"
+        } | Sort-Object -Unique
+      register: port_details
+
+    - name: Identify unexpected ports
+      set_fact:
+        unexpected_ports: "{{ open_ports.stdout_lines | default([]) | map('trim') | difference(expected_ports | map('string') | list) | list }}"
+
+    - name: Display port scan
+      debug:
+        msg:
+          - "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]"
+          - "Open ports: {{ open_ports.stdout_lines | default([]) | map('trim') | join(', ') }}"
+          - "Unexpected: {{ unexpected_ports | length }}"
+
+    - name: Send Discord alert for unexpected ports
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "🔍 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: {{ unexpected_ports | length }} unexpected ports\n```\n{{ port_details.stdout }}\n```"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
+      delegate_to: localhost
+      when:
+        - discord_webhook_url is defined
+        - unexpected_ports | length > 0
