@@ -57,8 +57,6 @@
 
     - name: Find and fix containers with untagged image IDs
       shell: |
-        fixed=""
-        failed=""
         docker ps --format '{{ '{{' }}.Names{{ '}}' }} {{ '{{' }}.Image{{ '}}' }}' | while read name image; do
           if echo "$image" | grep -qE '^[0-9a-f]{12}$'; then
             project_dir=$(docker inspect --format '{{ '{{' }}index .Config.Labels "com.docker.compose.project.working_dir"{{ '}}' }}' "$name" 2>/dev/null)
@@ -70,8 +68,6 @@
               else
                 echo "FAILED|$name|$project_dir"
               fi
-            else
-              echo "FAILED|$name|no compose file found"
             fi
           fi
         done
@@ -96,13 +92,13 @@
         - discord_webhook_url is defined
         - "'FIXED' in untagged_fix.stdout"
 
-    - name: Send Discord alert for unfixable containers
+    - name: Send Discord alert for unfixable compose containers
       uri:
         url: "{{ discord_webhook_url }}"
         method: POST
         body_format: json
         body:
-          content: "⚠️ {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: Could not auto-fix these untagged containers. Manual intervention needed:\n```\n{{ untagged_fix.stdout_lines | select('match', '^FAILED') | list | join('\n') }}\n```"
+          content: "⚠️ {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: Could not auto-fix these containers:\n```\n{{ untagged_fix.stdout_lines | select('match', '^FAILED') | list | join('\n') }}\n```"
         headers:
           Content-Type: application/json
         status_code: 204
