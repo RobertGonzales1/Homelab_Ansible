@@ -1,8 +1,15 @@
 ---
 - name: Windows Firewall Status Check
   hosts: all
+  gather_facts: false
   serial: 5
+  ignore_unreachable: true
   tasks:
+
+    - name: Check host is reachable
+      win_ping:
+      register: host_check
+      failed_when: false
 
     - name: Get firewall profile status
       win_shell: |
@@ -10,6 +17,7 @@
           "$($_.Name): Enabled=$($_.Enabled) DefaultInbound=$($_.DefaultInboundAction) DefaultOutbound=$($_.DefaultOutboundAction)"
         }
       register: firewall_profiles
+      when: host_check is succeeded
 
     - name: Check for disabled firewall profiles
       win_shell: |
@@ -23,21 +31,15 @@
           Write-Output "ALL_ENABLED"
         }
       register: firewall_status
-
-    - name: Get recently added firewall rules (last 30 days)
-      win_shell: |
-        Get-NetFirewallRule | Where-Object {
-          $_.Direction -eq 'Inbound' -and $_.Action -eq 'Allow' -and $_.Enabled -eq 'True'
-        } | Select-Object -Property DisplayName, Direction, Action |
-          Format-Table -AutoSize | Out-String -Width 120
-      register: inbound_rules
+      when: host_check is succeeded
 
     - name: Display firewall status
       debug:
         msg:
           - "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]"
-          - "{{ firewall_profiles.stdout }}"
-          - "Status: {{ firewall_status.stdout | trim }}"
+          - "{{ firewall_profiles.stdout | default('N/A') }}"
+          - "Status: {{ firewall_status.stdout | default('N/A') | trim }}"
+      when: host_check is succeeded
 
     - name: Send Discord alert if firewall is disabled
       uri:
@@ -56,4 +58,6 @@
       delegate_to: localhost
       when:
         - discord_webhook_url is defined
+        - host_check is succeeded
+        - firewall_status.stdout is defined
         - "'DISABLED' in firewall_status.stdout"
