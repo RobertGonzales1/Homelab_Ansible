@@ -1,14 +1,22 @@
 ---
 - name: Windows Disk Cleanup
   hosts: all
+  gather_facts: false
   serial: 5
+  ignore_unreachable: true
   tasks:
+
+    - name: Check host is reachable
+      win_ping:
+      register: host_check
+      failed_when: false
 
     - name: Get disk space before cleanup
       win_shell: |
         $disk = Get-WmiObject Win32_LogicalDisk -Filter "DeviceID='C:'"
         [math]::Round($disk.FreeSpace / 1GB, 2)
       register: space_before
+      when: host_check is succeeded
 
     - name: Clear Windows temp files
       win_shell: |
@@ -27,11 +35,13 @@
         }
         Write-Output "$([math]::Round($cleared / 1MB, 0))MB"
       register: temp_cleared
+      when: host_check is succeeded
 
     - name: Clear recycle bin
       win_shell: Clear-RecycleBin -Force -ErrorAction SilentlyContinue; Write-Output "Done"
       register: recycle_cleared
       failed_when: false
+      when: host_check is succeeded
 
     - name: Clear Windows Update cache
       win_shell: |
@@ -45,6 +55,7 @@
         }
         Start-Service wuauserv -ErrorAction SilentlyContinue
       register: wu_cleared
+      when: host_check is succeeded
 
     - name: Clear event logs
       win_shell: |
@@ -54,20 +65,29 @@
         Write-Output "Done"
       register: logs_cleared
       failed_when: false
+      when: host_check is succeeded
 
     - name: Get disk space after cleanup
       win_shell: |
         $disk = Get-WmiObject Win32_LogicalDisk -Filter "DeviceID='C:'"
         [math]::Round($disk.FreeSpace / 1GB, 2)
       register: space_after
+      when: host_check is succeeded
 
     - name: Calculate space reclaimed
       set_fact:
         reclaimed: "{{ (space_after.stdout | trim | float - space_before.stdout | trim | float) | round(2) }}"
+      when:
+        - host_check is succeeded
+        - space_before.stdout is defined
+        - space_after.stdout is defined
 
     - name: Display cleanup results
       debug:
         msg: "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] - Reclaimed {{ reclaimed }}GB (Temp: {{ temp_cleared.stdout | trim }}, WU Cache: {{ wu_cleared.stdout | trim }})"
+      when:
+        - host_check is succeeded
+        - reclaimed is defined
 
     - name: Send Discord notification
       uri:
@@ -86,4 +106,6 @@
       delegate_to: localhost
       when:
         - discord_webhook_url is defined
+        - host_check is succeeded
+        - reclaimed is defined
         - reclaimed | float > 0.1
