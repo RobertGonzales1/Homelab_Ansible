@@ -1,8 +1,15 @@
 ---
 - name: Windows Update
   hosts: all
+  gather_facts: false
   serial: 5
+  ignore_unreachable: true
   tasks:
+
+    - name: Check host is reachable
+      win_ping:
+      register: host_check
+      failed_when: false
 
     - name: Check for available updates
       win_updates:
@@ -13,10 +20,14 @@
           - Updates
         state: searched
       register: available_updates
+      when: host_check is succeeded
 
     - name: Display available updates
       debug:
         msg: "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] - {{ available_updates.found_update_count }} updates available"
+      when:
+        - host_check is succeeded
+        - available_updates.found_update_count is defined
 
     - name: Install updates and reboot if needed
       win_updates:
@@ -28,6 +39,10 @@
         reboot: true
         reboot_timeout: 600
       register: update_result
+      when:
+        - host_check is succeeded
+        - available_updates.found_update_count is defined
+        - available_updates.found_update_count > 0
 
     - name: Send Discord notification
       uri:
@@ -46,4 +61,6 @@
       delegate_to: localhost
       when:
         - discord_webhook_url is defined
-        - update_result.installed_update_count | default(0) > 0
+        - host_check is succeeded
+        - update_result.installed_update_count is defined
+        - update_result.installed_update_count > 0
