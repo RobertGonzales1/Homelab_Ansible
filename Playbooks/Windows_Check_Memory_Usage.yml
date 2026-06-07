@@ -1,10 +1,17 @@
 ---
 - name: Windows Memory Usage Check
   hosts: all
+  gather_facts: false
   serial: 5
+  ignore_unreachable: true
   vars:
     memory_threshold: 80
   tasks:
+
+    - name: Check host is reachable
+      win_ping:
+      register: host_check
+      failed_when: false
 
     - name: Get memory usage
       win_shell: |
@@ -16,20 +23,28 @@
         Write-Output "PERCENT:$pct"
         Write-Output "RAM: ${used}GB used / ${total}GB total (${pct}%)"
       register: memory_usage
+      when: host_check is succeeded
 
     - name: Get top memory processes
       win_shell: |
         Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First 5 |
           ForEach-Object { "$($_.Name): $([math]::Round($_.WorkingSet64 / 1MB, 0))MB" }
       register: top_processes
+      when: host_check is succeeded
 
     - name: Extract percentage
       set_fact:
         mem_pct: "{{ memory_usage.stdout_lines | select('match', '^PERCENT:') | first | replace('PERCENT:', '') }}"
+      when:
+        - host_check is succeeded
+        - memory_usage.stdout is defined
 
     - name: Display memory status
       debug:
         msg: "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] - {{ memory_usage.stdout_lines | reject('match', '^PERCENT:') | join('') }}"
+      when:
+        - host_check is succeeded
+        - memory_usage.stdout is defined
 
     - name: Send Discord alert when memory is over threshold
       uri:
@@ -48,4 +63,6 @@
       delegate_to: localhost
       when:
         - discord_webhook_url is defined
+        - host_check is succeeded
+        - mem_pct is defined
         - mem_pct | int > memory_threshold | int
