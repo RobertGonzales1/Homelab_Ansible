@@ -1,8 +1,15 @@
 ---
 - name: Windows Disk Space Check
   hosts: all
+  gather_facts: false
   serial: 5
+  ignore_unreachable: true
   tasks:
+
+    - name: Check host is reachable
+      win_ping:
+      register: host_check
+      failed_when: false
 
     - name: Get disk space usage
       win_shell: |
@@ -13,6 +20,7 @@
           "$($_.DeviceID) $pct% used ($free GB free / $total GB total)"
         }
       register: disk_usage
+      when: host_check is succeeded
 
     - name: Check for high disk usage
       win_shell: |
@@ -23,10 +31,14 @@
         }
         if ($alert) { Write-Output "ALERT" } else { Write-Output "OK" }
       register: disk_alert
+      when: host_check is succeeded
 
     - name: Display disk usage
       debug:
         msg: "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: {{ disk_usage.stdout_lines | join(', ') }}"
+      when:
+        - host_check is succeeded
+        - disk_usage.stdout is defined
 
     - name: Send Discord alert when disk space is over 80%
       uri:
@@ -45,4 +57,6 @@
       delegate_to: localhost
       when:
         - discord_webhook_url is defined
+        - host_check is succeeded
+        - disk_alert.stdout is defined
         - "'ALERT' in disk_alert.stdout"
