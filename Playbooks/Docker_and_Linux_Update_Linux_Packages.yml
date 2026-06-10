@@ -3,22 +3,33 @@
   hosts: docker_vms:linux_vms
   become: true
   serial: 5
+  ignore_unreachable: true
   tasks:
+
+    - name: Check host is reachable
+      ping:
+      register: host_check
+      failed_when: false
 
     - name: Update apt cache
       apt:
         update_cache: true
         cache_valid_time: 3600
       changed_when: false
+      when: host_check is succeeded
 
     - name: Get list of upgradable packages
       command: apt list --upgradable
       register: upgradable
       changed_when: false
+      when: host_check is succeeded
 
     - name: Display upgradable packages
       debug:
         msg: "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] - {{ upgradable.stdout_lines | length - 1 }} packages to upgrade"
+      when:
+        - host_check is succeeded
+        - upgradable.stdout is defined
 
     - name: Upgrade all packages
       apt:
@@ -26,11 +37,13 @@
         autoremove: true
         autoclean: true
       register: upgrade_result
+      when: host_check is succeeded
 
     - name: Check if reboot is required
       stat:
         path: /var/run/reboot-required
       register: reboot_required
+      when: host_check is succeeded
 
     - name: Send Discord notification before reboot
       uri:
@@ -48,23 +61,34 @@
       delay: 3
       when:
         - discord_webhook_url is defined
+        - host_check is succeeded
+        - upgradable.stdout is defined
         - upgradable.stdout_lines | length > 1
 
     - name: Reboot if required
       reboot:
         reboot_timeout: 300
         msg: "Rebooting after package updates"
-      when: reboot_required.stat.exists
+      when:
+        - host_check is succeeded
+        - reboot_required.stat is defined
+        - reboot_required.stat.exists
 
     - name: Wait for host to come back
       wait_for_connection:
         delay: 10
         timeout: 300
-      when: reboot_required.stat.exists
+      when:
+        - host_check is succeeded
+        - reboot_required.stat is defined
+        - reboot_required.stat.exists
 
     - name: Verify host is up after reboot
       ping:
-      when: reboot_required.stat.exists
+      when:
+        - host_check is succeeded
+        - reboot_required.stat is defined
+        - reboot_required.stat.exists
 
     - name: Send Discord notification after reboot
       uri:
@@ -82,4 +106,25 @@
       delay: 3
       when:
         - discord_webhook_url is defined
+        - host_check is succeeded
+        - reboot_required.stat is defined
         - reboot_required.stat.exists
+
+    - name: Send Discord alert for unreachable hosts
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "🔌 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: VM unreachable - skipped updates"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
+      delegate_to: localhost
+      when:
+        - discord_webhook_url is defined
+        - host_check is not succeeded
