@@ -3,37 +3,41 @@
   hosts: docker_vms:linux_vms
   become: true
   serial: 5
+  ignore_unreachable: true
   tasks:
+
+    - name: Check host is reachable
+      ping:
+      register: host_check
+      failed_when: false
 
     - name: Check if Fail2Ban is running
       command: fail2ban-client status
       register: f2b_status
       changed_when: false
       failed_when: false
-
-    - name: Get SSH jail status
-      command: fail2ban-client status sshd
-      register: f2b_sshd
-      changed_when: false
-      failed_when: false
-      when: f2b_status.rc == 0
+      when: host_check is succeeded
 
     - name: Get list of banned IPs
       shell: fail2ban-client status sshd | grep "Banned IP" | sed 's/.*Banned IP list:\s*//'
       register: banned_ips
       changed_when: false
       failed_when: false
-      when: f2b_status.rc == 0
+      when:
+        - host_check is succeeded
+        - f2b_status.rc == 0
 
     - name: Get total ban count from log
       shell: grep -c "Ban " /var/log/fail2ban.log 2>/dev/null || echo "0"
       register: total_bans
       changed_when: false
+      when: host_check is succeeded
 
     - name: Get top 10 most banned IPs
       shell: grep "Ban " /var/log/fail2ban.log 2>/dev/null | awk '{print $NF}' | sort | uniq -c | sort -rn | head -10
       register: top_offenders
       changed_when: false
+      when: host_check is succeeded
 
     - name: Display Fail2Ban status
       debug:
@@ -42,6 +46,7 @@
           Fail2Ban {{ 'RUNNING' if f2b_status.rc == 0 else 'NOT RUNNING' }} |
           Currently banned: {{ banned_ips.stdout | default('none') }} |
           Total bans in log: {{ total_bans.stdout }}
+      when: host_check is succeeded
 
     - name: Send Discord alert if Fail2Ban is not running
       uri:
@@ -59,6 +64,7 @@
       delay: 3
       when:
         - discord_webhook_url is defined
+        - host_check is succeeded
         - f2b_status.rc != 0
 
     - name: Send Discord report
@@ -77,5 +83,25 @@
       delay: 3
       when:
         - discord_webhook_url is defined
+        - host_check is succeeded
         - f2b_status.rc == 0
         - total_bans.stdout | int > 0
+
+    - name: Send Discord alert for unreachable hosts
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "🔌 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: VM unreachable"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
+      delegate_to: localhost
+      when:
+        - discord_webhook_url is defined
+        - host_check is not succeeded
