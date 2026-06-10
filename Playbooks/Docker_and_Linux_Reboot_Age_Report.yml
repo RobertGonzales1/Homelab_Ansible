@@ -3,28 +3,40 @@
   hosts: docker_vms:linux_vms
   become: true
   serial: 5
+  ignore_unreachable: true
   vars:
     max_uptime_days: 90
   tasks:
+
+    - name: Check host is reachable
+      ping:
+      register: host_check
+      failed_when: false
 
     - name: Get uptime in seconds
       shell: cat /proc/uptime | awk '{print int($1)}'
       register: uptime_seconds
       changed_when: false
+      when: host_check is succeeded
 
     - name: Calculate uptime in days
       set_fact:
         uptime_days: "{{ (uptime_seconds.stdout | int / 86400) | round(1) }}"
+      when:
+        - host_check is succeeded
+        - uptime_seconds.stdout is defined
 
     - name: Get human readable uptime
       command: uptime -p
       register: uptime_pretty
       changed_when: false
+      when: host_check is succeeded
 
     - name: Get current kernel version
       command: uname -r
       register: current_kernel
       changed_when: false
+      when: host_check is succeeded
 
     - name: Check if newer kernel is installed but not booted
       shell: |
@@ -37,10 +49,14 @@
         fi
       register: kernel_status
       changed_when: false
+      when: host_check is succeeded
 
     - name: Display uptime report
       debug:
         msg: "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] - {{ uptime_pretty.stdout }} | Kernel: {{ current_kernel.stdout }} | {{ 'NEEDS REBOOT' if uptime_days | float > max_uptime_days | float else 'OK' }}"
+      when:
+        - host_check is succeeded
+        - uptime_days is defined
 
     - name: Send Discord alert for stale VMs
       uri:
@@ -58,4 +74,25 @@
       delay: 3
       when:
         - discord_webhook_url is defined
+        - host_check is succeeded
+        - uptime_days is defined
         - (uptime_days | float > max_uptime_days | float) or ('STALE' in kernel_status.stdout)
+
+    - name: Send Discord alert for unreachable hosts
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "🔌 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: VM unreachable"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
+      delegate_to: localhost
+      when:
+        - discord_webhook_url is defined
+        - host_check is not succeeded
