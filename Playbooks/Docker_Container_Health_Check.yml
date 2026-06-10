@@ -3,28 +3,53 @@
   hosts: docker_vms
   become: true
   serial: 5
-  ignore_unreachable: true
+  gather_facts: false
   vars:
     ignored_containers:
       - immich_machine_learning
   tasks:
 
     - name: Check host is reachable
-      ping:
+      wait_for_connection:
+        timeout: 10
       register: host_check
-      failed_when: false
+      ignore_errors: true
+
+    - name: Send Discord alert for unreachable hosts
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "🔌 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: VM unreachable - cannot check container health"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
+      delegate_to: localhost
+      when:
+        - discord_webhook_url is defined
+        - host_check is failed
+
+    - name: Skip unreachable hosts
+      meta: end_host
+      when: host_check is failed
+
+    - name: Gather facts
+      setup:
 
     - name: Get unhealthy containers
       shell: docker ps --filter health=unhealthy --format '{{ '{{' }}.Names{{ '}}' }} ({{ '{{' }}.Status{{ '}}' }})'
       register: unhealthy_raw
       changed_when: false
-      when: host_check is succeeded
 
     - name: Get restarting containers
       shell: docker ps --filter status=restarting --format '{{ '{{' }}.Names{{ '}}' }} ({{ '{{' }}.Status{{ '}}' }})'
       register: restarting_raw
       changed_when: false
-      when: host_check is succeeded
 
     - name: Get exited containers (last 24h)
       shell: |
@@ -42,7 +67,6 @@
         done
       register: recently_exited
       changed_when: false
-      when: host_check is succeeded
 
     - name: Filter out ignored containers
       set_fact:
@@ -50,13 +74,11 @@
         restarting: "{{ restarting_raw.stdout_lines | default([]) | reject('search', ignored_regex) | list }}"
       vars:
         ignored_regex: "{{ '(' + (ignored_containers | join('|')) + ')' }}"
-      when: host_check is succeeded
 
     - name: Get container resource usage
       shell: "docker stats --no-stream --format '{{ '{{' }}.Name{{ '}}' }}: CPU {{ '{{' }}.CPUPerc{{ '}}' }} | MEM {{ '{{' }}.MemUsage{{ '}}' }}'"
       register: container_stats
       changed_when: false
-      when: host_check is succeeded
 
     - name: Display health status
       debug:
@@ -65,7 +87,6 @@
           - "Unhealthy: {{ unhealthy | length }} ({{ unhealthy_raw.stdout_lines | length - unhealthy | length }} ignored)"
           - "Restarting: {{ restarting | length }} ({{ restarting_raw.stdout_lines | length - restarting | length }} ignored)"
           - "Recently exited: {{ recently_exited.stdout_lines | default([]) | length }}"
-      when: host_check is succeeded
 
     - name: Build problem report
       set_fact:
@@ -89,7 +110,6 @@
           - {{ c }}
           {% endfor %}
           {% endif %}
-      when: host_check is succeeded
 
     - name: Send Discord alert for problems
       uri:
@@ -107,24 +127,4 @@
       delay: 3
       when:
         - discord_webhook_url is defined
-        - host_check is succeeded
         - has_problems | bool
-
-    - name: Send Discord alert for unreachable hosts
-      uri:
-        url: "{{ discord_webhook_url }}"
-        method: POST
-        body_format: json
-        body:
-          content: "🔌 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: VM unreachable - cannot check container health"
-        headers:
-          Content-Type: application/json
-        status_code: 204
-      register: discord_result
-      until: discord_result.status == 204
-      retries: 3
-      delay: 3
-      delegate_to: localhost
-      when:
-        - discord_webhook_url is defined
-        - host_check is not succeeded
