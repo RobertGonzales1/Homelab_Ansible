@@ -3,24 +3,29 @@
   hosts: docker_vms
   become: true
   serial: 5
+  ignore_unreachable: true
   vars:
     max_log_size_mb: 100
   tasks:
+
+    - name: Check host is reachable
+      ping:
+      register: host_check
+      failed_when: false
 
     - name: Find oversized container logs
       shell: |
         find /var/lib/docker/containers/ -name "*-json.log" -size +{{ max_log_size_mb }}M -exec ls -lh {} \; 2>/dev/null | awk '{print $5, $NF}'
       register: large_logs
       changed_when: false
-
-    - name: Get total docker log size
-      shell: du -sh /var/lib/docker/containers/*/  2>/dev/null | sort -rh | head -10
-      register: log_sizes
-      changed_when: false
+      when: host_check is succeeded
 
     - name: Display large logs
       debug:
         msg: "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] - {{ large_logs.stdout_lines | length }} logs over {{ max_log_size_mb }}MB"
+      when:
+        - host_check is succeeded
+        - large_logs.stdout is defined
 
     - name: Truncate oversized container logs
       shell: |
@@ -32,6 +37,7 @@
         echo "$truncated"
       register: truncated
       changed_when: truncated.stdout | int > 0
+      when: host_check is succeeded
 
     - name: Configure Docker daemon log rotation
       copy:
@@ -48,12 +54,16 @@
         group: root
         mode: "0644"
       register: daemon_config
+      when: host_check is succeeded
 
     - name: Restart Docker to apply daemon config
       systemd:
         name: docker
         state: restarted
-      when: daemon_config.changed
+      when:
+        - host_check is succeeded
+        - daemon_config.changed is defined
+        - daemon_config.changed
 
     - name: Send Discord notification
       uri:
@@ -71,4 +81,24 @@
       delay: 3
       when:
         - discord_webhook_url is defined
-        - (truncated.stdout | int > 0) or daemon_config.changed
+        - host_check is succeeded
+        - (truncated.stdout is defined and truncated.stdout | int > 0) or (daemon_config.changed is defined and daemon_config.changed)
+
+    - name: Send Discord alert for unreachable hosts
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "🔌 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: VM unreachable"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
+      delegate_to: localhost
+      when:
+        - discord_webhook_url is defined
+        - host_check is not succeeded
