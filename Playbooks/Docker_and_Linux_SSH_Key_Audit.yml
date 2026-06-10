@@ -3,31 +3,43 @@
   hosts: docker_vms:linux_vms
   become: true
   serial: 5
-  ignore_unreachable: true
+  gather_facts: false
   tasks:
 
     - name: Check host is reachable
-      ping:
+      wait_for_connection:
+        timeout: 10
       register: host_check
-      failed_when: false
+      ignore_errors: true
+
+    - name: Send Discord alert for unreachable hosts
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "🔌 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: VM unreachable"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      delegate_to: localhost
+      when:
+        - discord_webhook_url is defined
+        - host_check is failed
+
+    - name: Skip unreachable hosts
+      meta: end_host
+      when: host_check is failed
 
     - name: Check if password authentication is enabled
       shell: sshd -T 2>/dev/null | grep -i "passwordauthentication" | awk '{print $2}'
       register: password_auth
       changed_when: false
-      when: host_check is succeeded
 
     - name: Check for root login enabled
       shell: sshd -T 2>/dev/null | grep -i "permitrootlogin" | awk '{print $2}'
       register: root_login
       changed_when: false
-      when: host_check is succeeded
-
-    - name: Check SSH port
-      shell: sshd -T 2>/dev/null | grep -i "^port " | awk '{print $2}'
-      register: ssh_port
-      changed_when: false
-      when: host_check is succeeded
 
     - name: Get authorized keys summary
       shell: |
@@ -47,22 +59,10 @@
         done
       register: ssh_keys_summary
       changed_when: false
-      when: host_check is succeeded
-
-    - name: Display audit results
-      debug:
-        msg:
-          - "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]"
-          - "Password auth: {{ password_auth.stdout | default('unknown') }}"
-          - "Root login: {{ root_login.stdout | default('unknown') }}"
-          - "SSH port: {{ ssh_port.stdout | default('unknown') }}"
-          - "{{ ssh_keys_summary.stdout | default('No keys found') }}"
-      when: host_check is succeeded
 
     - name: Check for security issues
       set_fact:
         has_issues: "{{ (password_auth.stdout | default('no')) == 'yes' or (root_login.stdout | default('no')) == 'yes' }}"
-      when: host_check is succeeded
 
     - name: Send Discord alert for security issues
       uri:
@@ -70,7 +70,7 @@
         method: POST
         body_format: json
         body:
-          content: "🔐 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]:{{ ' ⚠️ Password auth ENABLED!' if password_auth.stdout == 'yes' else '' }}{{ ' ⚠️ Root login ENABLED!' if root_login.stdout == 'yes' else '' }}\nPort: {{ ssh_port.stdout }}\n```\n{{ ssh_keys_summary.stdout }}\n```"
+          content: "🔐 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]:{{ ' ⚠️ Password auth ENABLED!' if password_auth.stdout == 'yes' else '' }}{{ ' ⚠️ Root login ENABLED!' if root_login.stdout == 'yes' else '' }}\n```\n{{ ssh_keys_summary.stdout }}\n```"
         headers:
           Content-Type: application/json
         status_code: 204
@@ -80,25 +80,4 @@
       delay: 3
       when:
         - discord_webhook_url is defined
-        - host_check is succeeded
-        - has_issues is defined
         - has_issues | bool
-
-    - name: Send Discord alert for unreachable hosts
-      uri:
-        url: "{{ discord_webhook_url }}"
-        method: POST
-        body_format: json
-        body:
-          content: "🔌 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: VM unreachable"
-        headers:
-          Content-Type: application/json
-        status_code: 204
-      register: discord_result
-      until: discord_result.status == 204
-      retries: 3
-      delay: 3
-      delegate_to: localhost
-      when:
-        - discord_webhook_url is defined
-        - host_check is not succeeded
