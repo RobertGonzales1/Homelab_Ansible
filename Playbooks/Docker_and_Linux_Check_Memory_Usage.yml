@@ -3,60 +3,16 @@
   hosts: docker_vms:linux_vms
   become: true
   serial: 5
-  ignore_unreachable: true
+  gather_facts: false
   vars:
     memory_threshold: 80
   tasks:
 
     - name: Check host is reachable
-      ping:
+      wait_for_connection:
+        timeout: 10
       register: host_check
-      failed_when: false
-
-    - name: Get memory usage percentage
-      shell: free | awk '/Mem:/ {printf "%.0f", $3/$2 * 100}'
-      register: memory_usage
-      changed_when: false
-      when: host_check is succeeded
-
-    - name: Get detailed memory info
-      shell: free -h
-      register: memory_detail
-      changed_when: false
-      when: host_check is succeeded
-
-    - name: Get top 5 memory-consuming processes
-      shell: ps aux --sort=-%mem | head -6
-      register: top_processes
-      changed_when: false
-      when: host_check is succeeded
-
-    - name: Display memory status
-      debug:
-        msg: "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] - Memory usage: {{ memory_usage.stdout }}%{{ ' ⚠️ HIGH' if memory_usage.stdout | int > memory_threshold | int else '' }}"
-      when:
-        - host_check is succeeded
-        - memory_usage.stdout is defined
-
-    - name: Send Discord alert when memory is over threshold
-      uri:
-        url: "{{ discord_webhook_url }}"
-        method: POST
-        body_format: json
-        body:
-          content: "🧠 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: Memory usage is at {{ memory_usage.stdout }}%!\n```\n{{ memory_detail.stdout }}\n\nTop processes:\n{{ top_processes.stdout }}\n```"
-        headers:
-          Content-Type: application/json
-        status_code: 204
-      register: discord_result
-      until: discord_result.status == 204
-      retries: 3
-      delay: 3
-      when:
-        - discord_webhook_url is defined
-        - host_check is succeeded
-        - memory_usage.stdout is defined
-        - memory_usage.stdout | int > memory_threshold | int
+      ignore_errors: true
 
     - name: Send Discord alert for unreachable hosts
       uri:
@@ -75,4 +31,48 @@
       delegate_to: localhost
       when:
         - discord_webhook_url is defined
-        - host_check is not succeeded
+        - host_check is failed
+
+    - name: Skip unreachable hosts
+      meta: end_host
+      when: host_check is failed
+
+    - name: Gather facts
+      setup:
+
+    - name: Get memory usage percentage
+      shell: free | awk '/Mem:/ {printf "%.0f", $3/$2 * 100}'
+      register: memory_usage
+      changed_when: false
+
+    - name: Get detailed memory info
+      shell: free -h
+      register: memory_detail
+      changed_when: false
+
+    - name: Get top 5 memory-consuming processes
+      shell: ps aux --sort=-%mem | head -6
+      register: top_processes
+      changed_when: false
+
+    - name: Display memory status
+      debug:
+        msg: "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] - Memory usage: {{ memory_usage.stdout }}%{{ ' ⚠️ HIGH' if memory_usage.stdout | int > memory_threshold | int else '' }}"
+
+    - name: Send Discord alert when memory is over threshold
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "🧠 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: Memory usage is at {{ memory_usage.stdout }}%!\n```\n{{ memory_detail.stdout }}\n\nTop processes:\n{{ top_processes.stdout }}\n```"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      register: discord_result
+      until: discord_result.status == 204
+      retries: 3
+      delay: 3
+      when:
+        - discord_webhook_url is defined
+        - memory_usage.stdout | int > memory_threshold | int

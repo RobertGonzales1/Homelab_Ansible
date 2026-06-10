@@ -3,47 +3,59 @@
   hosts: docker_vms:linux_vms
   become: true
   serial: 5
-  ignore_unreachable: true
+  gather_facts: false
   vars:
     journal_max_age: 7d
   tasks:
 
     - name: Check host is reachable
-      ping:
+      wait_for_connection:
+        timeout: 10
       register: host_check
-      failed_when: false
+      ignore_errors: true
+
+    - name: Send Discord alert for unreachable hosts
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "🔌 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: VM unreachable"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      delegate_to: localhost
+      when:
+        - discord_webhook_url is defined
+        - host_check is failed
+
+    - name: Skip unreachable hosts
+      meta: end_host
+      when: host_check is failed
+
+    - name: Gather facts
+      setup:
 
     - name: Get current journal disk usage
       command: journalctl --disk-usage
       register: journal_before
       changed_when: false
-      when: host_check is succeeded
-
-    - name: Display current usage
-      debug:
-        msg: "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] - {{ journal_before.stdout }}"
-      when:
-        - host_check is succeeded
-        - journal_before.stdout is defined
 
     - name: Vacuum journals older than retention period
       command: journalctl --vacuum-time={{ journal_max_age }}
       register: vacuum_result
       changed_when: "'Freed' in vacuum_result.stdout"
-      when: host_check is succeeded
 
     - name: Get journal usage after cleanup
       command: journalctl --disk-usage
       register: journal_after
       changed_when: false
-      when: host_check is succeeded
 
     - name: Create journald config directory
       file:
         path: /etc/systemd/journald.conf.d
         state: directory
         mode: "0755"
-      when: host_check is succeeded
 
     - name: Configure persistent journal size limit
       copy:
@@ -57,16 +69,12 @@
         group: root
         mode: "0644"
       register: journald_config
-      when: host_check is succeeded
 
     - name: Restart journald to apply config
       systemd:
         name: systemd-journald
         state: restarted
-      when:
-        - host_check is succeeded
-        - journald_config.changed is defined
-        - journald_config.changed
+      when: journald_config.changed
 
     - name: Send Discord notification
       uri:
@@ -84,25 +92,4 @@
       delay: 3
       when:
         - discord_webhook_url is defined
-        - host_check is succeeded
-        - vacuum_result.changed is defined
         - vacuum_result.changed or journald_config.changed
-
-    - name: Send Discord alert for unreachable hosts
-      uri:
-        url: "{{ discord_webhook_url }}"
-        method: POST
-        body_format: json
-        body:
-          content: "🔌 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: VM unreachable"
-        headers:
-          Content-Type: application/json
-        status_code: 204
-      register: discord_result
-      until: discord_result.status == 204
-      retries: 3
-      delay: 3
-      delegate_to: localhost
-      when:
-        - discord_webhook_url is defined
-        - host_check is not succeeded
