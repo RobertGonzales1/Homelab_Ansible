@@ -3,13 +3,36 @@
   hosts: docker_vms:linux_vms
   become: true
   serial: 5
-  ignore_unreachable: true
+  gather_facts: false
   tasks:
 
     - name: Check host is reachable
-      ping:
+      wait_for_connection:
+        timeout: 10
       register: host_check
-      failed_when: false
+      ignore_errors: true
+
+    - name: Send Discord alert for unreachable hosts
+      uri:
+        url: "{{ discord_webhook_url }}"
+        method: POST
+        body_format: json
+        body:
+          content: "🔌 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: VM unreachable"
+        headers:
+          Content-Type: application/json
+        status_code: 204
+      delegate_to: localhost
+      when:
+        - discord_webhook_url is defined
+        - host_check is failed
+
+    - name: Skip unreachable hosts
+      meta: end_host
+      when: host_check is failed
+
+    - name: Gather facts
+      setup:
 
     - name: Install unattended-upgrades
       apt:
@@ -18,7 +41,6 @@
           - apt-listchanges
         state: present
         update_cache: true
-      when: host_check is succeeded
 
     - name: Enable unattended-upgrades via dpkg-reconfigure
       debconf:
@@ -26,7 +48,6 @@
         question: unattended-upgrades/enable_auto_updates
         value: "true"
         vtype: boolean
-      when: host_check is succeeded
 
     - name: Configure unattended-upgrades
       copy:
@@ -47,7 +68,6 @@
         group: root
         mode: "0644"
       register: config_changed
-      when: host_check is succeeded
 
     - name: Configure auto-update schedule
       copy:
@@ -60,20 +80,6 @@
         owner: root
         group: root
         mode: "0644"
-      when: host_check is succeeded
-
-    - name: Verify unattended-upgrades is active
-      command: apt-config dump APT::Periodic::Unattended-Upgrade
-      register: verify_result
-      changed_when: false
-      when: host_check is succeeded
-
-    - name: Display verification
-      debug:
-        msg: "{{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}] - Unattended upgrades: {{ 'ENABLED' if '1' in verify_result.stdout else 'DISABLED' }}"
-      when:
-        - host_check is succeeded
-        - verify_result.stdout is defined
 
     - name: Send Discord notification
       uri:
@@ -91,25 +97,4 @@
       delay: 3
       when:
         - discord_webhook_url is defined
-        - host_check is succeeded
-        - config_changed.changed is defined
         - config_changed.changed
-
-    - name: Send Discord alert for unreachable hosts
-      uri:
-        url: "{{ discord_webhook_url }}"
-        method: POST
-        body_format: json
-        body:
-          content: "🔌 {{ inventory_hostname }} ({{ ansible_host }}) [{{ proxmox_node }}]: VM unreachable"
-        headers:
-          Content-Type: application/json
-        status_code: 204
-      register: discord_result
-      until: discord_result.status == 204
-      retries: 3
-      delay: 3
-      delegate_to: localhost
-      when:
-        - discord_webhook_url is defined
-        - host_check is not succeeded
