@@ -29,12 +29,12 @@ tailscale01      ansible_host=10.30.1.127  proxmox_node=pvelins01n01
 tailscale02      ansible_host=10.30.1.128  proxmox_node=pvelins02n01
 
 [proxmox]
-pvewins01n01     ansible_host=10.30.1.7
-pvewins02n01     ansible_host=10.30.1.8
-pvewins03n01     ansible_host=10.30.1.41
-pvelins01n01     ansible_host=10.30.1.9
-pvelins02n01     ansible_host=10.30.1.14
-pvelins03n01     ansible_host=10.30.1.40
+pvewins01n01     ansible_host=10.30.1.201
+pvewins02n01     ansible_host=10.30.1.202
+pvewins03n01     ansible_host=10.30.1.203
+pvelins01n01     ansible_host=10.30.1.204
+pvelins02n01     ansible_host=10.30.1.205
+pvelins03n01     ansible_host=10.30.1.206
 
 [pbs]
 pbs01            ansible_host=10.30.1.5
