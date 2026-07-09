@@ -21,10 +21,8 @@ immich           ansible_host=10.30.1.131  proxmox_node=pvelins02n01
 cloudflare-ddns  ansible_host=10.30.1.109  proxmox_node=pvelins02n01
 piholel01n01     ansible_host=10.30.1.121  proxmox_node=pvelins01n01
 piholel01n02     ansible_host=10.30.1.122  proxmox_node=pvelins02n01
-piholel01n03     ansible_host=10.30.1.123  proxmox_node=pvelins03n01
 piholel02n01     ansible_host=10.30.1.124  proxmox_node=pvelins01n01
 piholel02n02     ansible_host=10.30.1.125  proxmox_node=pvelins02n01
-piholel02n03     ansible_host=10.30.1.126  proxmox_node=pvelins03n01
 tailscale01      ansible_host=10.30.1.127  proxmox_node=pvelins01n01
 tailscale02      ansible_host=10.30.1.128  proxmox_node=pvelins02n01
 
