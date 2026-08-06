@@ -10,7 +10,7 @@ mailstore02      ansible_host=10.30.1.32   proxmox_node=pvewins02n01
 mailstore03      ansible_host=10.30.1.33   proxmox_node=pvewins02n01
 mailstore04      ansible_host=10.30.1.34   proxmox_node=pvewins02n01
 mailstore05      ansible_host=10.30.1.35   proxmox_node=pvewins02n01
-youtubedl        ansible_host=10.30.1.36   proxmox_node=pvewins02n01
+scripts          ansible_host=10.30.1.36   proxmox_node=pvewins02n01
 btpritv          ansible_host=10.30.1.37   proxmox_node=pvewins03n01
 btprimov         ansible_host=10.30.1.38   proxmox_node=pvewins03n01
 btpuboth         ansible_host=10.30.1.39   proxmox_node=pvewins03n01
