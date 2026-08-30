@@ -1,5 +1,4 @@
 [windows_server]
-voip             ansible_host=10.30.1.40   proxmox_node=pvewins01n01
 sonarrtv         ansible_host=10.30.1.11   proxmox_node=pvewins01n01
 sonarrrobert     ansible_host=10.30.1.17   proxmox_node=pvewins01n01
 radarrrobert     ansible_host=10.30.1.18   proxmox_node=pvewins01n01
